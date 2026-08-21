@@ -1,0 +1,5 @@
+# Claude Code 本機設定（各機器的權限允許清單，不進版控）
+.claude/settings.local.json
+
+# macOS
+.DS_Store

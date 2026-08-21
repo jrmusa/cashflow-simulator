@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>現金流製造機｜三情境互動追蹤</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  body{max-width:860px;margin:0 auto;padding:32px 18px;
+    font-family:"Noto Sans TC",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    line-height:1.7;color:#1a1a1a;background:#fff;}
+  h1{font-size:1.6em;border-bottom:2px solid #222;padding-bottom:.3em;}
+  h2{font-size:1.2em;margin-top:1.6em;border-bottom:1px solid #ddd;padding-bottom:.2em;}
+  .small{color:#666;font-size:.85em;}
+  table{border-collapse:collapse;width:100%;margin:.8em 0;font-size:.88em;}
+  th,td{border:1px solid #ccc;padding:5px 7px;text-align:right;}
+  th{background:#f5f5f5;font-weight:600;}
+  td:first-child,th:first-child{text-align:left;}
+  input{width:72px;text-align:right;border:1px solid #bbb;border-radius:4px;padding:3px 5px;font-size:.9em;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px 16px;margin:.6em 0;}
+  .grid label{display:flex;justify-content:space-between;align-items:center;font-size:.9em;}
+  button{background:#222;color:#fff;border:none;border-radius:6px;padding:9px 20px;
+    font-size:.95em;cursor:pointer;margin:8px 6px 8px 0;}
+  button.sec{background:#e8e8e8;color:#333;}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:1em 0;}
+  .card{border:1px solid #ddd;border-radius:8px;padding:14px;text-align:center;}
+  .card h3{margin:.2em 0;font-size:1em;} .card .big{font-size:1.5em;font-weight:700;}
+  .card .sub{color:#666;font-size:.82em;}
+  details{margin:.5em 0;} summary{cursor:pointer;font-weight:600;}
+  .neg{color:#c0392b;} .pos{color:#0a7a3a;}
+  @media(max-width:640px){.cards{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+<h1>現金流製造機｜三情境互動追蹤</h1>
+<p class="small">每季更新一次：把當時的市值、匯率、covered call 月收入填進去，下方三情境的 10 年推演與淨值走勢圖會即時重算。輸入會自動記在本機瀏覽器，下次打開接著用。單位：新台幣萬元。</p>
+
+<h2>1. 起始配置（每季更新市值）</h2>
+<div class="grid" id="holdings"></div>
+<div class="grid" id="globals"></div>
+<div style="max-width:440px;margin:1.2em auto 0"><canvas id="pie" height="240"></canvas></div>
+<p class="small" style="text-align:center">總投入資金各池佔比（不含負債）</p>
+
+<h2>2. 三情境假設</h2>
+<table id="scenTable">
+<tr><th>情境</th><th>ETF年報酬%</th><th>2887年漲%</th><th>KO淨漲%</th><th>SGOV殖利%</th><th>Call美元/月</th></tr>
+</table>
+<p class="small">悲觀情境內含兩次股災：第 3 年 −28%、第 7 年 −20%（可於下方調整）。動態提領：ETF 當年跌 &gt;15% 暫停、5–15% 減半，生活費缺口由備用金補到目標。</p>
+<div class="grid" id="crash"></div>
+
+<button onclick="calc()">重新計算</button>
+<button class="sec" onclick="resetDefaults()">回到預設值</button>
+
+<h2>3. 結果</h2>
+<div class="cards" id="cards"></div>
+<canvas id="chart" height="140"></canvas>
+<p class="small" style="margin-top:1em">現金流分工：<strong>0050+006208</strong> 每年提領 4%、<strong>2887</strong> 現金股利、<strong>KO</strong> covered call 三者供生活費；<strong>備用金</strong>利息平時補貼、股災年補足缺口；<strong>SGOV</strong> 為專款，每年約 34.8 萬只用來還貸不進生活費。KO 本身配息與 2887 股票股利均留倉再投入，不列入生活費。</p>
+<div id="tables"></div>
+
+<p class="small" style="margin-top:2em;border-top:1px solid #eee;padding-top:1em;">
+本頁為情境模擬工具，非投資建議或報酬保證。實際結果受市場、利率、匯率、個股事件影響。製作：2026-08-05。</p>
+
+<script>
+const FXk = 10000;
+const DEF = {
+  holdings:{"0050":300,"006208":330,"2887":633,"KO":590,"SGOV":330,"備用金":180},
+  fx:32.4, loanMonthly:2.8999, livingTarget:120, shares2887:176000,
+  scen:{
+    "樂觀":{etf:11,tw:8,ko:6,sgov:3.8,call:2500},
+    "中性":{etf:7, tw:3,ko:2,sgov:3.5,call:2200},
+    "悲觀":{etf:2, tw:-2,ko:-1,sgov:3.0,call:1500},
+  },
+  crash:{y1:3,m1:-28,y2:7,m2:-20}
+};
+let S = load();
+
+function load(){
+  try{const s=localStorage.getItem("cfm");if(s)return JSON.parse(s);}catch(e){}
+  return JSON.parse(JSON.stringify(DEF));
+}
+function save(){localStorage.setItem("cfm",JSON.stringify(S));}
+
+function num(v,d){const n=parseFloat(v);return isNaN(n)?d:n;}
+
+function buildInputs(){
+  const h=document.getElementById("holdings");h.innerHTML="";
+  for(const k in S.holdings){
+    h.innerHTML+=`<label>${k}<input id="h_${k}" value="${S.holdings[k]}"></label>`;
+  }
+  document.getElementById("globals").innerHTML=`
+    <label>匯率 USD/TWD<input id="g_fx" value="${S.fx}"></label>
+    <label>貸款月付(萬)<input id="g_lm" value="${S.loanMonthly}"></label>
+    <label>月生活費目標(萬)<input id="g_lt" value="${S.livingTarget/12}"></label>
+    <label>2887 股數<input id="g_sh" value="${S.shares2887}" style="width:90px"></label>`;
+  const t=document.getElementById("scenTable");
+  t.querySelectorAll(".r").forEach(e=>e.remove());
+  for(const name in S.scen){const s=S.scen[name];
+    const tr=document.createElement("tr");tr.className="r";
+    tr.innerHTML=`<td>${name}</td>
+      <td><input id="s_${name}_etf" value="${s.etf}"></td>
+      <td><input id="s_${name}_tw" value="${s.tw}"></td>
+      <td><input id="s_${name}_ko" value="${s.ko}"></td>
+      <td><input id="s_${name}_sgov" value="${s.sgov}"></td>
+      <td><input id="s_${name}_call" value="${s.call}"></td>`;
+    t.appendChild(tr);
+  }
+  document.getElementById("crash").innerHTML=`
+    <label>股災1 年<input id="c_y1" value="${S.crash.y1}"></label>
+    <label>股災1 跌幅%<input id="c_m1" value="${S.crash.m1}"></label>
+    <label>股災2 年<input id="c_y2" value="${S.crash.y2}"></label>
+    <label>股災2 跌幅%<input id="c_m2" value="${S.crash.m2}"></label>`;
+}
+
+function readInputs(){
+  for(const k in S.holdings)S.holdings[k]=num(document.getElementById("h_"+k).value,S.holdings[k]);
+  S.fx=num(document.getElementById("g_fx").value,S.fx);
+  S.loanMonthly=num(document.getElementById("g_lm").value,S.loanMonthly);
+  S.livingTarget=num(document.getElementById("g_lt").value,10)*12;
+  S.shares2887=num(document.getElementById("g_sh").value,S.shares2887);
+  for(const name in S.scen){const s=S.scen[name];
+    s.etf=num(document.getElementById(`s_${name}_etf`).value,s.etf);
+    s.tw=num(document.getElementById(`s_${name}_tw`).value,s.tw);
+    s.ko=num(document.getElementById(`s_${name}_ko`).value,s.ko);
+    s.sgov=num(document.getElementById(`s_${name}_sgov`).value,s.sgov);
+    s.call=num(document.getElementById(`s_${name}_call`).value,s.call);
+  }
+  S.crash.y1=num(document.getElementById("c_y1").value,3);
+  S.crash.m1=num(document.getElementById("c_m1").value,-28);
+  S.crash.y2=num(document.getElementById("c_y2").value,7);
+  S.crash.m2=num(document.getElementById("c_m2").value,-20);
+  save();
+}
+
+function run(name,pessimistic){
+  const s=S.scen[name];
+  const v=Object.assign({},S.holdings);
+  const loanAnnual=S.loanMonthly*12, loanTotal=loanAnnual*10;
+  let shares=S.shares2887, loanPaid=0;
+  const crash={};
+  if(pessimistic){crash[S.crash.y1]=S.crash.m1/100;crash[S.crash.y2]=S.crash.m2/100;}
+  const rows=[];
+  for(let yr=1;yr<=10;yr++){
+    let etfRet=s.etf/100;
+    if(crash[yr]!==undefined)etfRet=crash[yr];
+    let wr= etfRet<-0.15?0 : etfRet<-0.05?0.02 : 0.04;
+    const etfVal=v["0050"]+v["006208"];
+    const etfWd=etfVal*wr;
+    for(const k of["0050","006208"])v[k]=v[k]*(1+etfRet)-v[k]*wr;
+    const div2887=shares*1.0/FXk;
+    shares=Math.floor(shares*1.01);
+    v["2887"]=v["2887"]*(1+s.tw/100);
+    const callInc=s.call*12*S.fx/FXk;
+    v["KO"]=v["KO"]*(1+s.ko/100);
+    if(crash[yr]!==undefined)v["KO"]*=(1+crash[yr]*0.6);
+    const sgovInt=v["SGOV"]*(s.sgov/100);
+    v["SGOV"]=v["SGOV"]+sgovInt-loanAnnual;
+    if(v["SGOV"]<0){v["備用金"]+=v["SGOV"];v["SGOV"]=0;}
+    loanPaid+=loanAnnual;
+    const resInt=Math.min(v["備用金"],100)*0.018;
+    v["備用金"]+=resInt;
+    let living=etfWd+div2887+callInc+resInt;
+    let usedRes=0;
+    const gap=S.livingTarget-living;
+    if(gap>0&&etfRet<-0.05){usedRes=Math.min(gap,v["備用金"]);v["備用金"]-=usedRes;living+=usedRes;}
+    const assets=Object.values(v).reduce((a,b)=>a+b,0);
+    const net=assets-(loanTotal-loanPaid);
+    rows.push({yr,etfRet,wr,living,etf:v["0050"]+v["006208"],ko:v["KO"],
+      s2887:v["2887"],sgov:v["SGOV"],res:v["備用金"],assets,net,call:callInc,
+      etfWd,div2887,resInt,usedRes,loanPay:loanAnnual});
+  }
+  return rows;
+}
+
+let chart,pie;
+function drawPie(){
+  const labels=Object.keys(S.holdings);
+  const vals=labels.map(k=>S.holdings[k]);
+  const total=vals.reduce((a,b)=>a+b,0);
+  const cols=["#4e79a7","#59a14f","#e15759","#f28e2b","#b07aa1","#9c9c9c"];
+  if(pie)pie.destroy();
+  pie=new Chart(document.getElementById("pie"),{
+    type:"doughnut",
+    data:{labels:labels.map((k,i)=>`${k} ${(vals[i]/total*100).toFixed(1)}%`),
+      datasets:[{data:vals,backgroundColor:cols,borderColor:"#fff",borderWidth:2}]},
+    options:{plugins:{legend:{position:"right",labels:{font:{size:11}}},
+      title:{display:true,text:`總投入 ${total.toLocaleString()} 萬`},
+      tooltip:{callbacks:{label:c=>`${c.label.split(" ")[0]}: ${c.parsed.toLocaleString()} 萬`}}}}});
+}
+function calc(){
+  readInputs();
+  drawPie();
+  const res={"樂觀":run("樂觀",false),"中性":run("中性",false),"悲觀":run("悲觀",true)};
+  // cards
+  const c=document.getElementById("cards");c.innerHTML="";
+  const colors={"樂觀":"#0a7a3a","中性":"#333","悲觀":"#c0392b"};
+  for(const name in res){const r=res[name];
+    const avg=r.reduce((a,x)=>a+x.living,0)/10;
+    c.innerHTML+=`<div class="card"><h3 style="color:${colors[name]}">${name}</h3>
+      <div class="big">${(avg/12).toFixed(1)}<span class="sub"> 萬/月</span></div>
+      <div class="sub">平均生活費</div>
+      <div class="big" style="font-size:1.15em;margin-top:6px">${Math.round(r[9].net).toLocaleString()}</div>
+      <div class="sub">期末淨值(萬)</div></div>`;
+  }
+  // chart
+  const labels=Array.from({length:10},(_,i)=>"第"+(i+1)+"年");
+  const ds=Object.keys(res).map(name=>({
+    label:name,data:res[name].map(x=>Math.round(x.net)),
+    borderColor:colors[name],backgroundColor:colors[name],tension:.2,pointRadius:2}));
+  if(chart)chart.destroy();
+  chart=new Chart(document.getElementById("chart"),{
+    type:"line",data:{labels,datasets:ds},
+    options:{plugins:{title:{display:true,text:"淨值走勢（萬元）"}},
+      scales:{y:{ticks:{callback:v=>v.toLocaleString()}}}}});
+  // tables
+  const t=document.getElementById("tables");t.innerHTML="";
+  const colorsT={"樂觀":"#0a7a3a","中性":"#333","悲觀":"#c0392b"};
+  for(const name in res){const r=res[name];
+    let h=`<h3 style="color:${colorsT[name]};margin-top:1.4em;border-bottom:1px solid #ddd;padding-bottom:.2em">${name}情境</h3>`;
+    // (A) 現金流來源明細（每個投資池對應的現金流）
+    h+=`<p class="small" style="margin:.6em 0 .2em">各投資池對應現金流（萬/年）</p><table>
+      <tr><th>年</th><th>0050+006208<br>提領</th><th>2887<br>現金股利</th><th>KO<br>Covered Call</th><th>備用金<br>利息</th><th>備用金<br>補缺口</th><th>生活費<br>合計</th><th>SGOV→<br>還貸</th></tr>`;
+    let tot={etfWd:0,div2887:0,call:0,resInt:0,usedRes:0,living:0,loanPay:0};
+    for(const x of r){
+      const rc=x.etfRet<0?' class="neg"':'';
+      const uc=x.usedRes>0?' class="neg"':'';
+      h+=`<tr><td${rc}>${x.yr}</td><td>${x.etfWd.toFixed(1)}</td><td>${x.div2887.toFixed(1)}</td>
+        <td>${x.call.toFixed(1)}</td><td>${x.resInt.toFixed(1)}</td><td${uc}>${x.usedRes.toFixed(1)}</td>
+        <td><strong>${x.living.toFixed(1)}</strong></td><td>${x.loanPay.toFixed(1)}</td></tr>`;
+      tot.etfWd+=x.etfWd;tot.div2887+=x.div2887;tot.call+=x.call;tot.resInt+=x.resInt;
+      tot.usedRes+=x.usedRes;tot.living+=x.living;tot.loanPay+=x.loanPay;
+    }
+    h+=`<tr><th>10年合計</th><th>${tot.etfWd.toFixed(0)}</th><th>${tot.div2887.toFixed(0)}</th>
+      <th>${tot.call.toFixed(0)}</th><th>${tot.resInt.toFixed(0)}</th><th>${tot.usedRes.toFixed(0)}</th>
+      <th>${tot.living.toFixed(0)}</th><th>${tot.loanPay.toFixed(0)}</th></tr></table>`;
+    // (B) 資產與淨值推演
+    h+=`<p class="small" style="margin:.6em 0 .2em">資產與淨值推演（萬）</p><table>
+      <tr><th>年</th><th>ETF報酬</th><th>提領%</th><th>ETF值</th><th>KO值</th><th>2887值</th><th>SGOV</th><th>備用金</th><th>總資產</th><th>淨值</th></tr>`;
+    for(const x of r){
+      const rc=x.etfRet<0?' class="neg"':'';
+      h+=`<tr><td>${x.yr}</td><td${rc}>${(x.etfRet*100).toFixed(0)}%</td><td>${(x.wr*100).toFixed(0)}%</td>
+        <td>${x.etf.toFixed(0)}</td><td>${x.ko.toFixed(0)}</td><td>${x.s2887.toFixed(0)}</td>
+        <td>${x.sgov.toFixed(0)}</td><td>${x.res.toFixed(0)}</td><td>${x.assets.toFixed(0)}</td>
+        <td><strong>${x.net.toFixed(0)}</strong></td></tr>`;
+    }
+    h+=`</table>`;t.innerHTML+=h;
+  }
+}
+function resetDefaults(){S=JSON.parse(JSON.stringify(DEF));save();buildInputs();calc();}
+buildInputs();calc();
+</script>
+</body>
+</html>

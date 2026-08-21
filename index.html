@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>現金流製造機｜三情境互動追蹤</title>
+<link rel="stylesheet" href="css/styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+
+<header class="page-header">
+  <h1>現金流製造機｜三情境互動追蹤</h1>
+  <p class="small">每季更新一次：把當時的市值、匯率、covered call 月收入填進去，三情境的 10 年推演與淨值走勢圖會即時重算。輸入會自動記在本機瀏覽器，下次打開接著用。單位：新台幣萬元。</p>
+</header>
+
+<main class="tab-panels">
+
+  <section class="tab-panel is-active" id="panel-config" data-tab="config">
+    <div class="grouped-card">
+      <div class="subsection-header">
+        <h3>外觀</h3>
+      </div>
+      <div class="theme-toggle" id="themeToggle" role="radiogroup" aria-label="外觀模式">
+        <button type="button" class="theme-toggle__option" data-theme-value="light" aria-pressed="false">
+          <span class="theme-toggle__icon" aria-hidden="true">☀️</span>
+          <span>淺色</span>
+        </button>
+        <button type="button" class="theme-toggle__option" data-theme-value="dark" aria-pressed="false">
+          <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
+          <span>深色</span>
+        </button>
+      </div>
+    </div>
+
+    <h2 class="section-title">1. 起始配置（每季更新市值）</h2>
+
+    <div class="grouped-card">
+      <div class="subsection-header">
+        <h3>0050 + 006208｜生活費提領池</h3>
+        <p class="small">每年固定依設定的提領%提領，不隨當年漲跌調整，供生活費使用。</p>
+      </div>
+      <div class="field-grid" id="etfInputs"></div>
+    </div>
+
+    <div class="grouped-card">
+      <div class="subsection-header">
+        <h3>2887｜股息與配股</h3>
+        <p class="small">配股為股票股利，不可出售；配股(元)換算股數以每股面額 10 元計算，未滿 1 股改發等值現金。每年配息與配股皆以當年最新總股數（原始股數＋歷年累積配股）計算，會逐年成長。</p>
+      </div>
+      <div class="field-grid" id="s2887Inputs"></div>
+    </div>
+
+    <div class="grouped-card">
+      <div class="subsection-header">
+        <h3>KO｜Covered Call</h3>
+        <p class="small">市值留倉成長；Covered Call 月收入於「情境假設」頁依情境設定，供生活費使用。</p>
+      </div>
+      <div class="field-grid" id="koInputs"></div>
+    </div>
+
+    <div class="grouped-card">
+      <div class="subsection-header">
+        <h3>SGOV｜還貸專款</h3>
+        <p class="small">殖利息收入扣除每年還貸金額；不足由備用金補足，不進生活費。</p>
+      </div>
+      <div class="field-grid" id="sgovInputs"></div>
+    </div>
+
+    <div class="grouped-card">
+      <div class="subsection-header">
+        <h3>備用金｜生活費備援</h3>
+        <p class="small">利息平時補貼生活費；股災年（ETF 跌 &gt;5%）用來補足生活費缺口。</p>
+      </div>
+      <div class="field-grid" id="reserveInputs"></div>
+    </div>
+
+    <div class="grouped-card">
+      <div class="subsection-header">
+        <h3>全域設定</h3>
+      </div>
+      <div class="field-grid" id="globalInputs"></div>
+    </div>
+
+    <div class="chart-wrap chart-wrap--pie">
+      <canvas id="pie"></canvas>
+    </div>
+    <p class="small" style="text-align:center">總投入資金各池佔比（不含負債）</p>
+  </section>
+
+  <section class="tab-panel" id="panel-scenario" data-tab="scenario">
+    <h2 class="section-title">2. 三情境假設</h2>
+    <div class="table-scroll">
+      <table id="scenTable">
+        <tr><th>情境</th><th>ETF年報酬%</th><th>2887年漲%</th><th>KO淨漲%</th><th>SGOV殖利%</th><th>Call美元/月</th></tr>
+      </table>
+    </div>
+    <p class="small">悲觀情境內含兩次股災：第 3 年 −28%、第 7 年 −20%（可於下方調整）。股災年生活費若不足，缺口由備用金補到目標。</p>
+    <div class="grouped-card">
+      <div class="field-grid" id="crash"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btn-recalc">重新計算</button>
+      <button class="btn btn-secondary" id="btn-reset">回到預設值</button>
+    </div>
+  </section>
+
+  <section class="tab-panel" id="panel-results" data-tab="results">
+    <h2 class="section-title">3. 結果</h2>
+    <div class="cards" id="cards"></div>
+    <div class="chart-wrap">
+      <canvas id="chart"></canvas>
+    </div>
+    <p class="small" style="margin-top:1em">現金流分工：<strong>0050+006208</strong> 每年依設定提領%、<strong>2887</strong> 現金股利、<strong>KO</strong> covered call 三者供生活費；<strong>備用金</strong>依設定利率生息平時補貼、股災年補足缺口；<strong>SGOV</strong> 為專款，每年約 34.8 萬只用來還貸不進生活費。KO 本身配息與 2887 股票股利均留倉再投入，不列入生活費。</p>
+    <div id="tables"></div>
+  </section>
+
+</main>
+
+<footer class="disclaimer">
+  <p class="small">本頁為情境模擬工具，非投資建議或報酬保證。實際結果受市場、利率、匯率、個股事件影響。製作：2026-08-20。</p>
+</footer>
+
+<nav class="tab-bar" id="tabBar">
+  <button class="tab-bar__item is-active" data-tab="config" aria-selected="true" aria-controls="panel-config">
+    <span class="tab-bar__icon" aria-hidden="true">⚙️</span>
+    <span class="tab-bar__label">配置</span>
+  </button>
+  <button class="tab-bar__item" data-tab="scenario" aria-selected="false" aria-controls="panel-scenario">
+    <span class="tab-bar__icon" aria-hidden="true">🎯</span>
+    <span class="tab-bar__label">情境假設</span>
+  </button>
+  <button class="tab-bar__item" data-tab="results" aria-selected="false" aria-controls="panel-results">
+    <span class="tab-bar__icon" aria-hidden="true">📈</span>
+    <span class="tab-bar__label">結果</span>
+  </button>
+</nav>
+
+<script src="js/model.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
