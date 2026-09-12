@@ -11,7 +11,7 @@
 
 <header class="page-header">
   <h1>現金流製造機｜三情境互動追蹤</h1>
-  <p class="small">每季更新一次：把當時的市值、匯率、covered call 月收入填進去，三情境的 10 年推演與淨值走勢圖會即時重算。輸入會自動記在本機瀏覽器，下次打開接著用。單位：新台幣萬元。</p>
+  <p class="small">每季更新一次：把當時的市值、匯率、KO 美元部位（每股市價與總投入金額）、三情境的每口報價填進去，10 年推演與淨值走勢圖會即時重算。輸入會自動記在本機瀏覽器，下次打開接著用。單位：新台幣萬元。</p>
 </header>
 
 <main class="tab-panels">
@@ -54,7 +54,7 @@
     <div class="grouped-card">
       <div class="subsection-header">
         <h3>KO｜Covered Call</h3>
-        <p class="small">市值留倉成長；Covered Call 月收入於「情境假設」頁依情境設定，供生活費使用。</p>
+        <p class="small">市值＝總投入金額 × 匯率，留倉成長；口數由「總投入金額 ÷ 每股市價 ÷ 100」無條件捨去自動算出。每口報價（選擇權市場慣例：報價為每股價格）於「情境假設」頁依情境設定，口數 × 100股 × 報價即為月收入，供生活費使用。</p>
       </div>
       <div class="field-grid" id="koInputs"></div>
     </div>
@@ -92,7 +92,7 @@
     <h2 class="section-title">2. 三情境假設</h2>
     <div class="table-scroll">
       <table id="scenTable">
-        <tr><th>情境</th><th>ETF年報酬%</th><th>2887年漲%</th><th>KO淨漲%</th><th>SGOV殖利%</th><th>Call美元/月</th></tr>
+        <tr><th>情境</th><th>ETF年報酬%</th><th>2887年漲%</th><th>KO淨漲%</th><th>SGOV殖利%</th><th>每口價格/月</th></tr>
       </table>
     </div>
     <p class="small">悲觀情境內含兩次股災：第 3 年 −28%、第 7 年 −20%（可於下方調整）。股災年生活費若不足，缺口由備用金補到目標。</p>

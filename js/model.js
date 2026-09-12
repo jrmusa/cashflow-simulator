@@ -20,10 +20,12 @@
     shares2887Base: 176000,
     dividendPerShare2887: 1.0,
     stockDividendPerShare2887: 0.1,
+    koUsdAmount: 182100, // KO 總投入金額(美元)：用來自動換算股數/口數
+    koPriceUsd: 91.05,   // KO 每股市價(美元)：股數 = 總投入金額 / 每股市價
     scen: {
-      "樂觀": { etf: 11, tw: 8, ko: 6, sgov: 3.8, call: 2500 },
-      "中性": { etf: 7, tw: 3, ko: 2, sgov: 3.5, call: 2200 },
-      "悲觀": { etf: 2, tw: -2, ko: -1, sgov: 3.0, call: 1500 }
+      "樂觀": { etf: 11, tw: 8, ko: 6, sgov: 3.8, callPricePerShare: 0.9 },
+      "中性": { etf: 7, tw: 3, ko: 2, sgov: 3.5, callPricePerShare: 0.6 },
+      "悲觀": { etf: 2, tw: -2, ko: -1, sgov: 3.0, callPricePerShare: 0.3 }
     },
     crash: { y1: 3, m1: -28, y2: 7, m2: -20 }
   };
@@ -56,6 +58,14 @@
     return JSON.parse(JSON.stringify(obj));
   }
 
+  // KO covered call 部位：股數 = 美元金額 / 美元市價；口數 = 股數 / 100 無條件捨去
+  // （每口(1 contract) = 100 股，不足 100 股的零股無法賣出該口）。
+  function koPosition(usdAmount, priceUsd) {
+    var shares = priceUsd > 0 ? usdAmount / priceUsd : 0;
+    var contracts = Math.floor(shares / 100);
+    return { shares: shares, contracts: contracts };
+  }
+
   // Applies one year of monthly-compounding growth with a beginning-of-month withdrawal:
   // each month the withdrawal is deducted first, then only the remaining balance earns
   // that month's return — so withdrawn cash never shares in that month's growth (or loss).
@@ -77,7 +87,10 @@
   // params: { holdings, fx, loanMonthly, livingTarget, shares2887, scenario, crash, pessimistic }
   // - holdings: {"0050","006208","2887","KO","SGOV","備用金"} pool values (萬)
   // - livingTarget: ANNUAL target (萬)
-  // - scenario: {etf,tw,ko,sgov,call} percentages/USD-per-month
+  // - koUsdAmount/koPriceUsd: KO USD position size + USD market price -> shares -> contracts
+  // - scenario: {etf,tw,ko,sgov,callPricePerShare} percentages / USD-per-share option quote
+  //   (options are always quoted per share; one contract = 100 shares, so a quote of 0.9
+  //   means a $90 premium per contract per month)
   // - crash: {y1,m1,y2,m2} only applied when pessimistic is true
   function run(params) {
     var holdings = params.holdings;
@@ -92,6 +105,7 @@
     var s = params.scenario;
     var crashCfg = params.crash;
     var pessimistic = params.pessimistic;
+    var koPos = koPosition(params.koUsdAmount, params.koPriceUsd);
 
     var v = Object.assign({}, holdings);
     var loanAnnual = loanMonthly * 12;
@@ -132,7 +146,7 @@
       var shares2887Total = shares2887;
       v["2887"] = v["2887"] * (1 + s.tw / 100);
 
-      var callInc = (s.call * 12 * fx) / FXk;
+      var callInc = (koPos.contracts * 100 * s.callPricePerShare * 12 * fx) / FXk;
       v["KO"] = v["KO"] * (1 + s.ko / 100);
       if (crash[yr] !== undefined) v["KO"] *= 1 + crash[yr] * 0.6;
 
@@ -165,7 +179,8 @@
         etf: v["0050"] + v["006208"], ko: v["KO"], s2887: v["2887"],
         sgov: v["SGOV"], res: v["備用金"], assets: assets, net: net,
         call: callInc, etfWd: etfWd, div2887: div2887, resInt: resInt, resRate: resRate,
-        usedRes: usedRes, loanPay: loanAnnual, shares2887Total: shares2887Total
+        usedRes: usedRes, loanPay: loanAnnual, shares2887Total: shares2887Total,
+        koShares: koPos.shares, koContracts: koPos.contracts
       });
     }
     return rows;
@@ -178,6 +193,7 @@
     sanitizeNumber: sanitizeNumber,
     deepClone: deepClone,
     monthlyWithdrawalBalance: monthlyWithdrawalBalance,
+    koPosition: koPosition,
     run: run
   };
 });

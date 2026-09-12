@@ -28,6 +28,8 @@ function runScenario(name, overrides) {
     shares2887Base: state.shares2887Base !== undefined ? state.shares2887Base : DEF.shares2887Base,
     dividendPerShare2887: state.dividendPerShare2887 !== undefined ? state.dividendPerShare2887 : DEF.dividendPerShare2887,
     stockDividendPerShare2887: state.stockDividendPerShare2887 !== undefined ? state.stockDividendPerShare2887 : DEF.stockDividendPerShare2887,
+    koUsdAmount: state.koUsdAmount !== undefined ? state.koUsdAmount : DEF.koUsdAmount,
+    koPriceUsd: state.koPriceUsd !== undefined ? state.koPriceUsd : DEF.koPriceUsd,
     scenario: state.scenario || DEF.scen[name],
     crash: state.crash || DEF.crash,
     pessimistic: name === "悲觀"
@@ -45,9 +47,11 @@ test("DEF constants match reference exactly", function () {
   assert.strictEqual(M.DEF.shares2887Base, 176000);
   assert.strictEqual(M.DEF.dividendPerShare2887, 1.0);
   assert.strictEqual(M.DEF.stockDividendPerShare2887, 0.1);
-  assert.deepStrictEqual(M.DEF.scen["樂觀"], { etf: 11, tw: 8, ko: 6, sgov: 3.8, call: 2500 });
-  assert.deepStrictEqual(M.DEF.scen["中性"], { etf: 7, tw: 3, ko: 2, sgov: 3.5, call: 2200 });
-  assert.deepStrictEqual(M.DEF.scen["悲觀"], { etf: 2, tw: -2, ko: -1, sgov: 3.0, call: 1500 });
+  assert.strictEqual(M.DEF.koUsdAmount, 182100);
+  assert.strictEqual(M.DEF.koPriceUsd, 91.05);
+  assert.deepStrictEqual(M.DEF.scen["樂觀"], { etf: 11, tw: 8, ko: 6, sgov: 3.8, callPricePerShare: 0.9 });
+  assert.deepStrictEqual(M.DEF.scen["中性"], { etf: 7, tw: 3, ko: 2, sgov: 3.5, callPricePerShare: 0.6 });
+  assert.deepStrictEqual(M.DEF.scen["悲觀"], { etf: 2, tw: -2, ko: -1, sgov: 3.0, callPricePerShare: 0.3 });
   assert.deepStrictEqual(M.DEF.crash, { y1: 3, m1: -28, y2: 7, m2: -20 });
   assert.strictEqual(M.FXk, 10000);
 });
@@ -59,7 +63,8 @@ test("run() returns 10 sequential rows with expected fields", function () {
   rows.forEach(function (row, i) {
     assert.strictEqual(row.yr, i + 1);
     ["etfRet", "wr", "living", "etf", "ko", "s2887", "sgov", "res", "assets", "net",
-      "call", "etfWd", "div2887", "resInt", "resRate", "usedRes", "loanPay", "shares2887Total"].forEach(function (key) {
+      "call", "etfWd", "div2887", "resInt", "resRate", "usedRes", "loanPay", "shares2887Total",
+      "koShares", "koContracts"].forEach(function (key) {
       assert.ok(key in row, "missing field " + key);
     });
   });
@@ -75,7 +80,8 @@ test("withdrawal rate is always the configured rate, regardless of that year's r
       livingTarget: M.DEF.livingTarget, withdrawalRate: withdrawalRate, reserveRate: M.DEF.reserveRate,
       shares2887Base: M.DEF.shares2887Base, dividendPerShare2887: M.DEF.dividendPerShare2887,
       stockDividendPerShare2887: M.DEF.stockDividendPerShare2887,
-      scenario: { etf: pct, tw: 0, ko: 0, sgov: 0, call: 0 },
+      koUsdAmount: M.DEF.koUsdAmount, koPriceUsd: M.DEF.koPriceUsd,
+      scenario: { etf: pct, tw: 0, ko: 0, sgov: 0, callPricePerShare: 0 },
       crash: { y1: 99, m1: 0, y2: 98, m2: 0 }, pessimistic: false
     });
     return rows[0].wr;
@@ -187,6 +193,7 @@ test("2887 fractional stock-dividend shares are cashed out at face value, not ro
     holdings: M.DEF.holdings, fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly, livingTarget: M.DEF.livingTarget,
     withdrawalRate: M.DEF.withdrawalRate, reserveRate: M.DEF.reserveRate,
     shares2887Base: base, dividendPerShare2887: divRate, stockDividendPerShare2887: rate,
+    koUsdAmount: M.DEF.koUsdAmount, koPriceUsd: M.DEF.koPriceUsd,
     scenario: M.DEF.scen["中性"], crash: M.DEF.crash, pessimistic: false
   });
   var stockDividendValueYuan = base * rate; // 17612.3 元
@@ -199,11 +206,29 @@ test("2887 fractional stock-dividend shares are cashed out at face value, not ro
   assert.strictEqual(rows[0].shares2887Total, base + wholeShares);
 });
 
-// 6. Covered call formula
-test("covered call income = call*12*fx/FXk", function () {
+// 6. Covered call formula: shares = usdAmount/priceUsd, contracts = floor(shares/100).
+// callPricePerShare is a per-share option quote (options are always quoted per share), so
+// income = contracts * 100 shares/contract * callPricePerShare * 12 * fx / FXk.
+test("covered call income = floor(shares/100) contracts * 100 * callPricePerShare * 12 * fx / FXk", function () {
   var rows = runScenario("中性");
-  var expected = (M.DEF.scen["中性"].call * 12 * M.DEF.fx) / M.FXk;
+  var shares = M.DEF.koUsdAmount / M.DEF.koPriceUsd;
+  var contracts = Math.floor(shares / 100);
+  var expected = (contracts * 100 * M.DEF.scen["中性"].callPricePerShare * 12 * M.DEF.fx) / M.FXk;
   assert.ok(Math.abs(rows[0].call - expected) < 1e-9);
+  assert.strictEqual(rows[0].koContracts, contracts);
+  assert.ok(Math.abs(rows[0].koShares - shares) < 1e-9);
+});
+
+// 6b. koPosition: shares = usdAmount/priceUsd, contracts floors down to whole 100-share lots
+// (a fractional contract can't be sold) — e.g. 1230 shares -> 12 contracts, not 12.3.
+test("koPosition floors partial contracts (e.g. 1230 shares -> 12 contracts)", function () {
+  var pos = M.koPosition(1230, 1); // $1/share so usdAmount doubles as share count
+  assert.strictEqual(pos.shares, 1230);
+  assert.strictEqual(pos.contracts, 12);
+
+  assert.strictEqual(M.koPosition(2000, 1).contracts, 20);
+  assert.strictEqual(M.koPosition(99, 1).contracts, 0, "under 100 shares sells 0 contracts");
+  assert.strictEqual(M.koPosition(100, 0).shares, 0, "zero/invalid price yields 0 shares, not Infinity/NaN");
 });
 
 // 7. SGOV shortfall borrowing from reserve
@@ -213,7 +238,9 @@ test("SGOV deficit is absorbed by 備用金 and SGOV clamps to 0", function () {
     fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly, livingTarget: M.DEF.livingTarget,
     withdrawalRate: M.DEF.withdrawalRate, reserveRate: M.DEF.reserveRate,
     shares2887Base: M.DEF.shares2887Base, dividendPerShare2887: M.DEF.dividendPerShare2887,
-    stockDividendPerShare2887: M.DEF.stockDividendPerShare2887, scenario: M.DEF.scen["中性"],
+    stockDividendPerShare2887: M.DEF.stockDividendPerShare2887,
+    koUsdAmount: M.DEF.koUsdAmount, koPriceUsd: M.DEF.koPriceUsd,
+    scenario: M.DEF.scen["中性"],
     crash: M.DEF.crash, pessimistic: false
   });
   var loanAnnual = M.DEF.loanMonthly * 12;
@@ -232,7 +259,9 @@ test("備用金 interest capped at min(balance,100) and scales with configurable
       fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly, livingTarget: M.DEF.livingTarget,
       withdrawalRate: M.DEF.withdrawalRate, reserveRate: reserveRate,
       shares2887Base: M.DEF.shares2887Base, dividendPerShare2887: M.DEF.dividendPerShare2887,
-      stockDividendPerShare2887: M.DEF.stockDividendPerShare2887, scenario: M.DEF.scen["中性"],
+      stockDividendPerShare2887: M.DEF.stockDividendPerShare2887,
+      koUsdAmount: M.DEF.koUsdAmount, koPriceUsd: M.DEF.koPriceUsd,
+      scenario: M.DEF.scen["中性"],
       crash: M.DEF.crash, pessimistic: false
     });
     return rows[0];
@@ -257,7 +286,8 @@ test("reserve gap-filling only triggers when gap>0 and etfRet<-5%", function () 
     livingTarget: M.DEF.livingTarget, withdrawalRate: M.DEF.withdrawalRate, reserveRate: M.DEF.reserveRate,
     shares2887Base: M.DEF.shares2887Base, dividendPerShare2887: M.DEF.dividendPerShare2887,
     stockDividendPerShare2887: M.DEF.stockDividendPerShare2887,
-    scenario: { etf: 3, tw: 0, ko: 0, sgov: 0, call: 0 },
+    koUsdAmount: M.DEF.koUsdAmount, koPriceUsd: M.DEF.koPriceUsd,
+    scenario: { etf: 3, tw: 0, ko: 0, sgov: 0, callPricePerShare: 0 },
     crash: { y1: 99, m1: 0, y2: 98, m2: 0 }, pessimistic: false
   });
   assert.strictEqual(positiveRows[0].usedRes, 0);
@@ -299,26 +329,28 @@ test("DEF survives JSON deep-clone round-trip", function () {
   assert.notStrictEqual(cloned.holdings, M.DEF.holdings);
 });
 
-// 13. Golden regression (captured from this model's own reference-faithful run)
+// 13. Golden regression (captured from this model's own reference-faithful run, after
+// KO covered call moved to shares/contracts x per-share option quote: 182100 USD / 91.05
+// USD = 2000 shares -> 20 contracts, x 100 shares/contract x callPricePerShare 0.9/0.6/0.3).
 test("golden regression: 中性 yr10 net and avg monthly living", function () {
   var rows = runScenario("中性");
   var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / 10 / 12;
   assert.ok(Math.abs(rows[9].net - 2659.574630373271) < 1e-6, "中性 net10=" + rows[9].net);
-  assert.ok(Math.abs(avgMonthly - 11.203326189015797) < 1e-6, "中性 avgMonthly=" + avgMonthly);
+  assert.ok(Math.abs(avgMonthly - 7.963326189015795) < 1e-6, "中性 avgMonthly=" + avgMonthly);
 });
 
 test("golden regression: 悲觀 yr10 net and avg monthly living", function () {
   var rows = runScenario("悲觀");
   var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / 10 / 12;
-  assert.ok(Math.abs(rows[9].net - 1387.3459836823622) < 1e-6, "悲觀 net10=" + rows[9].net);
-  assert.ok(Math.abs(avgMonthly - 8.35149537242392) < 1e-6, "悲觀 avgMonthly=" + avgMonthly);
+  assert.ok(Math.abs(rows[9].net - 1316.3202873151206) < 1e-6, "悲觀 net10=" + rows[9].net);
+  assert.ok(Math.abs(avgMonthly - 6.010014569363573) < 1e-6, "悲觀 avgMonthly=" + avgMonthly);
 });
 
 test("golden regression: 樂觀 yr10 net and avg monthly living", function () {
   var rows = runScenario("樂觀");
   var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / 10 / 12;
   assert.ok(Math.abs(rows[9].net - 3898.8308566049614) < 1e-6, "樂觀 net10=" + rows[9].net);
-  assert.ok(Math.abs(avgMonthly - 12.653997469757934) < 1e-6, "樂觀 avgMonthly=" + avgMonthly);
+  assert.ok(Math.abs(avgMonthly - 10.385997469757934) < 1e-6, "樂觀 avgMonthly=" + avgMonthly);
 });
 
 console.log("\n" + passed + " passed, " + failed + " failed");

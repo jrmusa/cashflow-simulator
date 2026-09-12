@@ -222,6 +222,8 @@ input {
   border-bottom: 1px solid var(--ios-separator);
 }
 .field-grid .stepper-field:last-child { border-bottom: none; }
+.field-grid .stepper-field:has(+ .ko-info) { border-bottom: none; }
+.ko-info { padding: var(--space-2) var(--space-1) var(--space-3); }
 
 .stepper-field__label {
   font-size: var(--fs-subheadline);

@@ -37,7 +37,26 @@
         // Guard against a stale localStorage shape from before the 2887
         // dividend/stock-dividend split — fall back to fresh defaults instead
         // of running with undefined fields.
-        if (parsed && typeof parsed.withdrawalRate === "number" && typeof parsed.reserveRate === "number") return parsed;
+        if (parsed && typeof parsed.withdrawalRate === "number" && typeof parsed.reserveRate === "number") {
+          // Migrate state saved before KO covered call became shares/contracts-based
+          // (總投入金額 ÷ 每股市價 → 股數 → 口數 × 每口報價 × 100股), so older
+          // localStorage doesn't end up with undefined koUsdAmount/koPriceUsd/callPricePerShare.
+          if (typeof parsed.koUsdAmount !== "number") parsed.koUsdAmount = CFMModel.DEF.koUsdAmount;
+          if (typeof parsed.koPriceUsd !== "number") parsed.koPriceUsd = CFMModel.DEF.koPriceUsd;
+          Object.keys(CFMModel.DEF.scen).forEach(function (name) {
+            var scenario = parsed.scen && parsed.scen[name];
+            if (scenario && typeof scenario.callPricePerShare !== "number") {
+              scenario.callPricePerShare = CFMModel.DEF.scen[name].callPricePerShare;
+              delete scenario.call;
+              delete scenario.callPerContract;
+            }
+          });
+          // holdings.KO used to be a manually-entered market value; it's now always derived
+          // from 總投入金額(USD) × 匯率, so stale/manual values are recomputed on load.
+          parsed.holdings = parsed.holdings || {};
+          parsed.holdings["KO"] = (parsed.koUsdAmount * parsed.fx) / CFMModel.FXk;
+          return parsed;
+        }
       }
     } catch (e) {}
     return CFMModel.deepClone(CFMModel.DEF);
@@ -176,15 +195,46 @@
     });
   }
 
+  // holdings["KO"] is no longer entered directly — it's the TWD-萬 market value used for
+  // pie-chart / net-worth compounding, derived from the USD position so there's one source
+  // of truth: 總投入金額(USD) × 匯率.
+  function syncKoHoldingValue() {
+    S.holdings["KO"] = (S.koUsdAmount * S.fx) / CFMModel.FXk;
+  }
+
+  var koInfoEl = null;
+  function updateKoInfo() {
+    if (!koInfoEl) return;
+    var pos = CFMModel.koPosition(S.koUsdAmount, S.koPriceUsd);
+    koInfoEl.textContent = "自動計算：約 " + Math.round(pos.shares).toLocaleString() + " 股 → " +
+      pos.contracts + " 口（股數 = 總投入金額 ÷ 每股市價；口數 = 股數 ÷ 100，無條件捨去）";
+  }
+
   function buildKoInputs() {
     var container = document.getElementById("koInputs");
     container.innerHTML = "";
-    var field = createStepperInput({
-      id: "h_KO", label: "市值(萬)", value: S.holdings["KO"],
-      min: 0, step: 10, decimals: 0,
-      onChange: function (v) { S.holdings["KO"] = v; scheduleRecalc(); }
+
+    var priceField = createStepperInput({
+      id: "h_KO_priceUsd", label: "每股市價", value: S.koPriceUsd,
+      min: 0.01, step: 1, decimals: 2,
+      onChange: function (v) { S.koPriceUsd = v; updateKoInfo(); scheduleRecalc(); }
     });
-    container.appendChild(field.el);
+    container.appendChild(priceField.el);
+
+    var usdField = createStepperInput({
+      id: "h_KO_usdAmount", label: "總投入金額", value: S.koUsdAmount,
+      min: 0, step: 1000, decimals: 0,
+      formatDisplay: function (v) { return v.toLocaleString(); },
+      onChange: function (v) { S.koUsdAmount = v; syncKoHoldingValue(); updateKoInfo(); scheduleRecalc(); }
+    });
+    container.appendChild(usdField.el);
+
+    var info = document.createElement("p");
+    info.className = "small ko-info";
+    koInfoEl = info;
+    container.appendChild(info);
+    syncKoHoldingValue();
+    updateKoInfo();
   }
 
   function buildSgovInputs() {
@@ -220,7 +270,7 @@
     container.innerHTML = "";
     var configs = [
       { id: "g_fx", label: "匯率 USD/TWD", value: S.fx, min: 0.01, step: 0.1, decimals: 2,
-        onChange: function (v) { S.fx = v; scheduleRecalc(); } },
+        onChange: function (v) { S.fx = v; syncKoHoldingValue(); updateKoInfo(); scheduleRecalc(); } },
       { id: "g_lt", label: "月生活費目標(萬)", value: roundTo(S.livingTarget / 12, 1), min: 0, step: 1, decimals: 1,
         onChange: function (v) { S.livingTarget = v * 12; scheduleRecalc(); } }
     ];
@@ -239,7 +289,7 @@
       { key: "tw", min: -100, max: 100, step: 0.5, decimals: 1 },
       { key: "ko", min: -100, max: 100, step: 0.5, decimals: 1 },
       { key: "sgov", min: 0, max: 100, step: 0.1, decimals: 1 },
-      { key: "call", min: 0, max: null, step: 50, decimals: 0 }
+      { key: "callPricePerShare", min: 0, max: null, step: 0.1, decimals: 2 }
     ];
 
     Object.keys(S.scen).forEach(function (name) {
@@ -560,6 +610,8 @@
         shares2887Base: S.shares2887Base,
         dividendPerShare2887: S.dividendPerShare2887,
         stockDividendPerShare2887: S.stockDividendPerShare2887,
+        koUsdAmount: S.koUsdAmount,
+        koPriceUsd: S.koPriceUsd,
         scenario: S.scen[name],
         crash: S.crash,
         pessimistic: name === "悲觀"
