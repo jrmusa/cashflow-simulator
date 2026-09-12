@@ -10,28 +10,27 @@
 <body>
 
 <header class="page-header">
-  <h1>現金流製造機｜三情境互動追蹤</h1>
+  <div class="page-header__title-row">
+    <h1>現金流製造機｜三情境互動追蹤</h1>
+    <div class="theme-toggle theme-toggle--compact" id="themeToggle" role="radiogroup" aria-label="外觀模式">
+      <button type="button" class="theme-toggle__option" data-theme-value="light" aria-pressed="false" aria-label="淺色">
+        <span class="theme-toggle__icon" aria-hidden="true">☀️</span>
+      </button>
+      <button type="button" class="theme-toggle__option" data-theme-value="dark" aria-pressed="false" aria-label="深色">
+        <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
+      </button>
+    </div>
+  </div>
   <p class="small">每季更新一次：把當時的市值、匯率、KO 美元部位（每股市價與總投入金額）、三情境的每口報價填進去，10 年推演與淨值走勢圖會即時重算。輸入會自動記在本機瀏覽器，下次打開接著用。單位：新台幣萬元。</p>
 </header>
 
 <main class="tab-panels">
 
   <section class="tab-panel is-active" id="panel-config" data-tab="config">
-    <div class="grouped-card">
-      <div class="subsection-header">
-        <h3>外觀</h3>
-      </div>
-      <div class="theme-toggle" id="themeToggle" role="radiogroup" aria-label="外觀模式">
-        <button type="button" class="theme-toggle__option" data-theme-value="light" aria-pressed="false">
-          <span class="theme-toggle__icon" aria-hidden="true">☀️</span>
-          <span>淺色</span>
-        </button>
-        <button type="button" class="theme-toggle__option" data-theme-value="dark" aria-pressed="false">
-          <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
-          <span>深色</span>
-        </button>
-      </div>
+    <div class="chart-wrap chart-wrap--pie">
+      <canvas id="pie"></canvas>
     </div>
+    <p class="small" style="text-align:center">總投入資金各池佔比（不含負債）</p>
 
     <h2 class="section-title">1. 起始配置（每季更新市值）</h2>
 
@@ -82,10 +81,6 @@
       <div class="field-grid" id="globalInputs"></div>
     </div>
 
-    <div class="chart-wrap chart-wrap--pie">
-      <canvas id="pie"></canvas>
-    </div>
-    <p class="small" style="text-align:center">總投入資金各池佔比（不含負債）</p>
   </section>
 
   <section class="tab-panel" id="panel-scenario" data-tab="scenario">
@@ -124,7 +119,7 @@
 <nav class="tab-bar" id="tabBar">
   <button class="tab-bar__item is-active" data-tab="config" aria-selected="true" aria-controls="panel-config">
     <span class="tab-bar__icon" aria-hidden="true">⚙️</span>
-    <span class="tab-bar__label">配置</span>
+    <span class="tab-bar__label">投資配置</span>
   </button>
   <button class="tab-bar__item" data-tab="scenario" aria-selected="false" aria-controls="panel-scenario">
     <span class="tab-bar__icon" aria-hidden="true">🎯</span>
