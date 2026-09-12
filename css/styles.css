@@ -244,6 +244,52 @@ input {
 .field-grid .stepper-field:has(+ .ko-info) { border-bottom: none; }
 .ko-info { padding: var(--space-2) var(--space-1) var(--space-3); }
 
+/* KO 即時市價列 */
+.ko-price-field__label-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ko-price-field__meta {
+  color: var(--ios-label-tertiary);
+}
+.ko-price-field__value-col {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+.ko-price-field__value {
+  font-size: var(--fs-subheadline);
+  font-weight: 700;
+  color: var(--ios-label);
+  font-variant-numeric: tabular-nums;
+  transition: color var(--anim-base) var(--anim-ease);
+}
+.ko-price-field__value.is-error { color: var(--ios-red); }
+.ko-refresh-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: var(--ios-fill-tertiary);
+  color: var(--ios-blue);
+  font-size: 1rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--anim-fast) var(--anim-ease), background-color var(--anim-base) var(--anim-ease), opacity var(--anim-base) var(--anim-ease);
+  -webkit-tap-highlight-color: transparent;
+}
+.ko-refresh-btn:active { transform: scale(0.9); }
+.ko-refresh-btn:disabled { opacity: 0.6; }
+.ko-refresh-btn.is-loading { animation: ko-refresh-spin 0.8s linear infinite; }
+@keyframes ko-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
 .stepper-field__label {
   font-size: var(--fs-subheadline);
   color: var(--ios-label);

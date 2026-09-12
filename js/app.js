@@ -6,6 +6,10 @@
   var SCEN_COLORS = { "樂觀": "#34C759", "中性": "#8E8E93", "悲觀": "#FF3B30" };
   var HOLDING_COLORS = ["#0A84FF", "#34C759", "#FF9F0A", "#FF375F", "#BF5AF2", "#8E8E93"];
 
+  // KO 每股市價即時報價（Finnhub 免費額度）。Key 綁定固定網域使用，屬公開唯讀報價 API。
+  var FINNHUB_TOKEN = "daifkl1r01qr9o8h2jdgdaifkl1r01qr9o8h2je0";
+  var FINNHUB_SYMBOL = "KO";
+
   function roundTo(v, decimals) {
     if (typeof decimals !== "number") return v;
     var factor = Math.pow(10, decimals);
@@ -210,16 +214,96 @@
       pos.contracts + " 口（股數 = 總投入金額 ÷ 每股市價；口數 = 股數 ÷ 100，無條件捨去）";
   }
 
+  // ===== KO 每股市價：即時報價（Finnhub），失敗時沿用上次成功值/預設值 =====
+  var koPriceValueEl = null, koPriceMetaEl = null, koRefreshBtnEl = null;
+
+  function formatClockTime(date) {
+    var pad = function (n) { return n < 10 ? "0" + n : String(n); };
+    return pad(date.getHours()) + ":" + pad(date.getMinutes()) + ":" + pad(date.getSeconds());
+  }
+
+  function setKoPriceUiState(state) {
+    if (!koPriceValueEl) return;
+    if (state.status === "loading") {
+      koPriceValueEl.textContent = "擷取中…";
+      koPriceValueEl.classList.remove("is-error");
+      koPriceMetaEl.textContent = "正在向 Finnhub 取得即時報價";
+      koRefreshBtnEl.classList.add("is-loading");
+      koRefreshBtnEl.disabled = true;
+    } else if (state.status === "ok") {
+      koPriceValueEl.textContent = "US$ " + state.price.toFixed(2);
+      koPriceValueEl.classList.remove("is-error");
+      koPriceMetaEl.textContent = "即時報價・更新於 " + formatClockTime(state.time);
+      koRefreshBtnEl.classList.remove("is-loading");
+      koRefreshBtnEl.disabled = false;
+    } else if (state.status === "error") {
+      koPriceValueEl.textContent = "US$ " + S.koPriceUsd.toFixed(2);
+      koPriceValueEl.classList.add("is-error");
+      koPriceMetaEl.textContent = "取得失敗，暫用上次數值（" + state.reason + "，點擊重試）";
+      koRefreshBtnEl.classList.remove("is-loading");
+      koRefreshBtnEl.disabled = false;
+    }
+  }
+
+  function fetchKoPrice() {
+    setKoPriceUiState({ status: "loading" });
+    fetch("https://finnhub.io/api/v1/quote?symbol=" + FINNHUB_SYMBOL + "&token=" + FINNHUB_TOKEN)
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        // Finnhub 回傳 c=0 代表查無報價（symbol 錯誤或非交易時段的極端情況）
+        if (typeof data.c !== "number" || data.c <= 0) throw new Error("無報價資料");
+        S.koPriceUsd = data.c;
+        syncKoHoldingValue();
+        updateKoInfo();
+        setKoPriceUiState({ status: "ok", price: data.c, time: new Date() });
+        scheduleRecalc();
+      })
+      .catch(function (err) {
+        setKoPriceUiState({ status: "error", reason: err.message || "網路錯誤" });
+      });
+  }
+
   function buildKoInputs() {
     var container = document.getElementById("koInputs");
     container.innerHTML = "";
 
-    var priceField = createStepperInput({
-      id: "h_KO_priceUsd", label: "每股市價", value: S.koPriceUsd,
-      min: 0.01, step: 1, decimals: 2,
-      onChange: function (v) { S.koPriceUsd = v; updateKoInfo(); scheduleRecalc(); }
-    });
-    container.appendChild(priceField.el);
+    var priceRow = document.createElement("div");
+    priceRow.className = "stepper-field ko-price-field";
+    var labelCol = document.createElement("div");
+    labelCol.className = "ko-price-field__label-col";
+    var labelEl = document.createElement("span");
+    labelEl.className = "stepper-field__label";
+    labelEl.textContent = "每股市價";
+    var metaEl = document.createElement("span");
+    metaEl.className = "ko-price-field__meta small";
+    labelCol.appendChild(labelEl);
+    labelCol.appendChild(metaEl);
+
+    var valueCol = document.createElement("div");
+    valueCol.className = "ko-price-field__value-col";
+    var valueEl = document.createElement("span");
+    valueEl.className = "ko-price-field__value";
+    var refreshBtn = document.createElement("button");
+    refreshBtn.type = "button";
+    refreshBtn.className = "ko-refresh-btn";
+    refreshBtn.setAttribute("aria-label", "重新整理股價");
+    refreshBtn.textContent = "⟳";
+    refreshBtn.addEventListener("click", fetchKoPrice);
+    valueCol.appendChild(valueEl);
+    valueCol.appendChild(refreshBtn);
+
+    priceRow.appendChild(labelCol);
+    priceRow.appendChild(valueCol);
+    container.appendChild(priceRow);
+
+    koPriceValueEl = valueEl;
+    koPriceMetaEl = metaEl;
+    koRefreshBtnEl = refreshBtn;
+    valueEl.textContent = "US$ " + S.koPriceUsd.toFixed(2);
+    metaEl.textContent = "尚未取得即時報價";
 
     var usdField = createStepperInput({
       id: "h_KO_usdAmount", label: "總投入金額", value: S.koUsdAmount,
@@ -235,6 +319,7 @@
     container.appendChild(info);
     syncKoHoldingValue();
     updateKoInfo();
+    fetchKoPrice();
   }
 
   function buildSgovInputs() {

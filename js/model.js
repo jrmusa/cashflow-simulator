@@ -20,7 +20,7 @@
     shares2887Base: 176000,
     dividendPerShare2887: 1.0,
     stockDividendPerShare2887: 0.1,
-    koUsdAmount: 182100, // KO 總投入金額(美元)：用來自動換算股數/口數
+    koUsdAmount: 80000,  // KO 總投入金額(美元)：用來自動換算股數/口數
     koPriceUsd: 91.05,   // KO 每股市價(美元)：股數 = 總投入金額 / 每股市價
     scen: {
       "樂觀": { etf: 11, tw: 8, ko: 6, sgov: 3.8, callPricePerShare: 0.9 },

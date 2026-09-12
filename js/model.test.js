@@ -47,7 +47,7 @@ test("DEF constants match reference exactly", function () {
   assert.strictEqual(M.DEF.shares2887Base, 176000);
   assert.strictEqual(M.DEF.dividendPerShare2887, 1.0);
   assert.strictEqual(M.DEF.stockDividendPerShare2887, 0.1);
-  assert.strictEqual(M.DEF.koUsdAmount, 182100);
+  assert.strictEqual(M.DEF.koUsdAmount, 80000);
   assert.strictEqual(M.DEF.koPriceUsd, 91.05);
   assert.deepStrictEqual(M.DEF.scen["樂觀"], { etf: 11, tw: 8, ko: 6, sgov: 3.8, callPricePerShare: 0.9 });
   assert.deepStrictEqual(M.DEF.scen["中性"], { etf: 7, tw: 3, ko: 2, sgov: 3.5, callPricePerShare: 0.6 });
@@ -330,27 +330,27 @@ test("DEF survives JSON deep-clone round-trip", function () {
 });
 
 // 13. Golden regression (captured from this model's own reference-faithful run, after
-// KO covered call moved to shares/contracts x per-share option quote: 182100 USD / 91.05
-// USD = 2000 shares -> 20 contracts, x 100 shares/contract x callPricePerShare 0.9/0.6/0.3).
+// koUsdAmount default dropped to 80000 USD / 91.05 USD = 878.6 shares -> 8 contracts,
+// x 100 shares/contract x callPricePerShare 0.9/0.6/0.3).
 test("golden regression: 中性 yr10 net and avg monthly living", function () {
   var rows = runScenario("中性");
   var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / 10 / 12;
   assert.ok(Math.abs(rows[9].net - 2659.574630373271) < 1e-6, "中性 net10=" + rows[9].net);
-  assert.ok(Math.abs(avgMonthly - 7.963326189015795) < 1e-6, "中性 avgMonthly=" + avgMonthly);
+  assert.ok(Math.abs(avgMonthly - 5.6305261890157965) < 1e-6, "中性 avgMonthly=" + avgMonthly);
 });
 
 test("golden regression: 悲觀 yr10 net and avg monthly living", function () {
   var rows = runScenario("悲觀");
   var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / 10 / 12;
-  assert.ok(Math.abs(rows[9].net - 1316.3202873151206) < 1e-6, "悲觀 net10=" + rows[9].net);
-  assert.ok(Math.abs(avgMonthly - 6.010014569363573) < 1e-6, "悲觀 avgMonthly=" + avgMonthly);
+  assert.ok(Math.abs(rows[9].net - 1286.7876598772455) < 1e-6, "悲觀 net10=" + rows[9].net);
+  assert.ok(Math.abs(avgMonthly - 5.064069340714613) < 1e-6, "悲觀 avgMonthly=" + avgMonthly);
 });
 
 test("golden regression: 樂觀 yr10 net and avg monthly living", function () {
   var rows = runScenario("樂觀");
   var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / 10 / 12;
   assert.ok(Math.abs(rows[9].net - 3898.8308566049614) < 1e-6, "樂觀 net10=" + rows[9].net);
-  assert.ok(Math.abs(avgMonthly - 10.385997469757934) < 1e-6, "樂觀 avgMonthly=" + avgMonthly);
+  assert.ok(Math.abs(avgMonthly - 6.8867974697579335) < 1e-6, "樂觀 avgMonthly=" + avgMonthly);
 });
 
 console.log("\n" + passed + " passed, " + failed + " failed");
