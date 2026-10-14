@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>現金流製造機｜三情境互動追蹤</title>
+<title>現金流製造機｜雙情境互動追蹤</title>
 <link rel="stylesheet" href="css/styles.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
@@ -11,7 +11,7 @@
 
 <header class="page-header">
   <div class="page-header__title-row">
-    <h1>現金流製造機｜三情境互動追蹤</h1>
+    <h1>現金流製造機｜雙情境互動追蹤</h1>
     <div class="theme-toggle theme-toggle--compact" id="themeToggle" role="radiogroup" aria-label="外觀模式">
       <button type="button" class="theme-toggle__option" data-theme-value="light" aria-pressed="false" aria-label="淺色">
         <span class="theme-toggle__icon" aria-hidden="true">☀️</span>
@@ -21,7 +21,7 @@
       </button>
     </div>
   </div>
-  <p class="small">每季更新一次：把當時的市值、匯率、KO 美元部位（總投入金額，每股市價自動即時抓取）、三情境的每口報價填進去，10 年推演與淨值走勢圖會即時重算。輸入會自動記在本機瀏覽器，下次打開接著用。單位：新台幣萬元。</p>
+  <p class="small">每季更新一次：把當時的市值、匯率、KO 美元部位（總投入金額，每股市價自動即時抓取）、兩情境的每口報價填進去，多年推演（預設 30 年、通膨 2%）與淨值走勢圖會即時重算。輸入會自動記在本機瀏覽器，下次打開接著用。單位：新台幣萬元。</p>
 </header>
 
 <main class="tab-panels">
@@ -37,7 +37,7 @@
     <div class="grouped-card">
       <div class="subsection-header">
         <h3>0050 + 006208｜生活費提領池</h3>
-        <p class="small">每年固定依設定的提領%提領，不隨當年漲跌調整，供生活費使用。</p>
+        <p class="small">提領率由「提領設定」分頁的生活費目標與通膨率反推（目標提領率），提領金額供生活費使用。</p>
       </div>
       <div class="field-grid" id="etfInputs"></div>
     </div>
@@ -61,7 +61,7 @@
     <div class="grouped-card">
       <div class="subsection-header">
         <h3>SGOV｜還貸專款</h3>
-        <p class="small">殖利息收入扣除每年還貸金額；不足由備用金補足，不進生活費。</p>
+        <p class="small">殖利息收入扣除每年還貸金額；不足由備用金補足，不進生活費。貸款年限可設定，超過年限後不再還貸。</p>
       </div>
       <div class="field-grid" id="sgovInputs"></div>
     </div>
@@ -69,7 +69,7 @@
     <div class="grouped-card">
       <div class="subsection-header">
         <h3>備用金｜生活費備援</h3>
-        <p class="small">利息平時補貼生活費；股災年（ETF 跌 &gt;5%）用來補足生活費缺口。</p>
+        <p class="small">利息平時補貼生活費；只要提領加其他收入仍達不到該年生活費目標（例如股災年或後期提領池耗盡），就用備用金補足缺口。</p>
       </div>
       <div class="field-grid" id="reserveInputs"></div>
     </div>
@@ -83,17 +83,36 @@
 
   </section>
 
+  <section class="tab-panel" id="panel-withdrawal" data-tab="withdrawal">
+    <h2 class="section-title">提領設定</h2>
+    <p class="small">提領適用於 <strong>0050+006208</strong> 與 <strong>2887</strong> 兩個池（KO 不提領，留倉成長並以 covered call 貢獻收入）。提領率不再手動設定，而是由每年的「月生活費目標」反推出<strong>目標提領率</strong>：為了湊足該年度生活費，兩個池該年需統一提領多少%（已扣除 2887 現金股利、KO covered call、備用金利息）。每月月初先提領、剩餘部位才賺當月報酬，結果會顯示在「結果」頁表格的「目標提領率」欄。</p>
+
+    <div class="grouped-card">
+      <div class="subsection-header">
+        <h3>生活費目標與通膨</h3>
+        <p class="small">第 1 年生活費 = 月生活費目標 × 12，之後每年乘上 (1 + 通膨率)。2887 提領會賣出對應股數，使現金股利與配股隨之減少；KO 不提領，股數與口數不變。若不提領就已達標，目標提領率為 0%；即使 100% 仍不足則以 100% 為上限，此時（或提領池已領完時）不足的部分由備用金補缺口，備用金也用完才會出現「未達標缺口」。</p>
+      </div>
+      <div class="field-grid" id="withdrawalInputs"></div>
+    </div>
+
+    <div class="grouped-card">
+      <div class="subsection-header">
+        <h3>推演年數</h3>
+        <p class="small">預設 30 年（最多 50 年）。年數越長，圖表與明細表越長。</p>
+      </div>
+      <div class="field-grid" id="horizonInputs"></div>
+    </div>
+  </section>
+
   <section class="tab-panel" id="panel-scenario" data-tab="scenario">
-    <h2 class="section-title">2. 三情境假設</h2>
+    <h2 class="section-title">2. 情境假設</h2>
     <div class="table-scroll">
       <table id="scenTable">
-        <tr><th>情境</th><th>ETF年報酬%</th><th>2887年漲%</th><th>KO淨漲%</th><th>SGOV殖利%</th><th>每口價格/月</th></tr>
+        <tr><th>情境</th><th>ETF年報酬%</th><th>2887報酬%<br>(含股利)</th><th>KO淨漲%</th><th>SGOV殖利%</th><th>每口價格/月</th></tr>
       </table>
     </div>
-    <p class="small">悲觀情境內含兩次股災：第 3 年 −28%、第 7 年 −20%（可於下方調整）。股災年生活費若不足，缺口由備用金補到目標。</p>
-    <div class="grouped-card">
-      <div class="field-grid" id="crash"></div>
-    </div>
+    <p class="small">情境中的報酬%皆為含股利的總報酬。2887 的現金股利會撥入生活費，因此其市值成長＝總報酬 − 現金股利（配股留在部位內，不另外扣除）。</p>
+    <p class="small">提領後生活費若仍不足，缺口由備用金補到目標；備用金也用完才會出現「未達標缺口」。</p>
     <div class="btn-row">
       <button class="btn btn-primary" id="btn-recalc">重新計算</button>
       <button class="btn btn-secondary" id="btn-reset">回到預設值</button>
@@ -106,7 +125,7 @@
     <div class="chart-wrap">
       <canvas id="chart"></canvas>
     </div>
-    <p class="small" style="margin-top:1em">現金流分工：<strong>0050+006208</strong> 每年依設定提領%、<strong>2887</strong> 現金股利、<strong>KO</strong> covered call 三者供生活費；<strong>備用金</strong>依設定利率生息平時補貼、股災年補足缺口；<strong>SGOV</strong> 為專款，每年約 34.8 萬只用來還貸不進生活費。KO 本身配息與 2887 股票股利均留倉再投入，不列入生活費。</p>
+    <p class="small" style="margin-top:1em">現金流分工：<strong>0050+006208 / 2887</strong> 依每年「目標提領率」（由通膨調整後的生活費目標反推）統一提領、<strong>2887</strong> 現金股利、<strong>KO</strong> covered call 共同供生活費；<strong>備用金</strong>依設定利率生息平時補貼、生活費目標達不到時補足缺口；<strong>SGOV</strong> 為專款，每年約 34.8 萬只用來還貸（於貸款年限內）不進生活費。KO 本身配息與 2887 股票股利均留倉再投入，不列入生活費。</p>
     <div id="tables"></div>
   </section>
 
@@ -121,6 +140,10 @@
     <span class="tab-bar__icon" aria-hidden="true">⚙️</span>
     <span class="tab-bar__label">投資配置</span>
   </button>
+  <button class="tab-bar__item" data-tab="withdrawal" aria-selected="false" aria-controls="panel-withdrawal">
+    <span class="tab-bar__icon" aria-hidden="true">💸</span>
+    <span class="tab-bar__label">提領設定</span>
+  </button>
   <button class="tab-bar__item" data-tab="scenario" aria-selected="false" aria-controls="panel-scenario">
     <span class="tab-bar__icon" aria-hidden="true">🎯</span>
     <span class="tab-bar__label">情境假設</span>
@@ -131,6 +154,7 @@
   </button>
 </nav>
 
+<script src="js/withdrawal.js"></script>
 <script src="js/model.js"></script>
 <script src="js/app.js"></script>
 </body>

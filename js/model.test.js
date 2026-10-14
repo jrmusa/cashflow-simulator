@@ -1,6 +1,11 @@
 "use strict";
 var assert = require("assert");
 var M = require("./model.js");
+var W = require("./withdrawal.js");
+
+// 產品已移除悲觀情境與股災設定；引擎仍保留股災機制，這裡以測試專用的壓力情境繼續驗證。
+var PESS = { etf: 2, tw: -2, ko: -1, sgov: 3.0, callPricePerShare: 0.3 };
+var CRASH = { y1: 3, m1: -28, y2: 7, m2: -20 };
 
 var passed = 0, failed = 0;
 function test(name, fn) {
@@ -24,14 +29,22 @@ function runScenario(name, overrides) {
     loanMonthly: state.loanMonthly !== undefined ? state.loanMonthly : DEF.loanMonthly,
     livingTarget: state.livingTarget !== undefined ? state.livingTarget : DEF.livingTarget,
     withdrawalRate: state.withdrawalRate !== undefined ? state.withdrawalRate : DEF.withdrawalRate,
+    // 既有測試與 golden 值皆為「僅 ETF 提領、10 年」的舊行為，預設把 2887/KO 提領設為 0、年數設為 10；
+    // 新行為由下方獨立測試以 overrides 明確開啟。
+    withdrawalMode: state.withdrawalMode || "fixed",
+    inflation: state.inflation !== undefined ? state.inflation : 0,
+    withdrawalRate2887: state.withdrawalRate2887 !== undefined ? state.withdrawalRate2887 : 0,
+    withdrawalRateKo: state.withdrawalRateKo !== undefined ? state.withdrawalRateKo : 0,
+    years: state.years !== undefined ? state.years : 10,
+    loanYears: state.loanYears !== undefined ? state.loanYears : DEF.loanYears,
     reserveRate: state.reserveRate !== undefined ? state.reserveRate : DEF.reserveRate,
     shares2887Base: state.shares2887Base !== undefined ? state.shares2887Base : DEF.shares2887Base,
     dividendPerShare2887: state.dividendPerShare2887 !== undefined ? state.dividendPerShare2887 : DEF.dividendPerShare2887,
     stockDividendPerShare2887: state.stockDividendPerShare2887 !== undefined ? state.stockDividendPerShare2887 : DEF.stockDividendPerShare2887,
     koUsdAmount: state.koUsdAmount !== undefined ? state.koUsdAmount : DEF.koUsdAmount,
     koPriceUsd: state.koPriceUsd !== undefined ? state.koPriceUsd : DEF.koPriceUsd,
-    scenario: state.scenario || DEF.scen[name],
-    crash: state.crash || DEF.crash,
+    scenario: state.scenario || (name === "悲觀" ? PESS : DEF.scen[name]),
+    crash: state.crash || CRASH,
     pessimistic: name === "悲觀"
   });
 }
@@ -51,9 +64,16 @@ test("DEF constants match reference exactly", function () {
   assert.strictEqual(M.DEF.koPriceUsd, 91.05);
   assert.deepStrictEqual(M.DEF.scen["樂觀"], { etf: 11, tw: 8, ko: 6, sgov: 3.8, callPricePerShare: 0.9 });
   assert.deepStrictEqual(M.DEF.scen["中性"], { etf: 7, tw: 3, ko: 2, sgov: 3.5, callPricePerShare: 0.6 });
-  assert.deepStrictEqual(M.DEF.scen["悲觀"], { etf: 2, tw: -2, ko: -1, sgov: 3.0, callPricePerShare: 0.3 });
-  assert.deepStrictEqual(M.DEF.crash, { y1: 3, m1: -28, y2: 7, m2: -20 });
+  assert.deepStrictEqual(Object.keys(M.DEF.scen), ["樂觀", "中性"]);
+  assert.strictEqual(M.DEF.crash, undefined);
   assert.strictEqual(M.FXk, 10000);
+});
+
+test("DEF new withdrawal/horizon defaults: 4% per pool, 30 years, loan 10 years", function () {
+  assert.strictEqual(M.DEF.withdrawalRate2887, 4);
+  assert.strictEqual(M.DEF.withdrawalRateKo, 4);
+  assert.strictEqual(M.DEF.years, 30);
+  assert.strictEqual(M.DEF.loanYears, 10);
 });
 
 // 2. Shape
@@ -75,7 +95,7 @@ test("run() returns 10 sequential rows with expected fields", function () {
 // changed outcomes, because a paused ETF withdrawal just shifts the draw onto 備用金 instead.)
 test("withdrawal rate is always the configured rate, regardless of that year's return", function () {
   function wrForReturn(pct, withdrawalRate) {
-    var rows = M.run({
+    var rows = M.run({ withdrawalMode: "fixed",
       holdings: M.DEF.holdings, fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly,
       livingTarget: M.DEF.livingTarget, withdrawalRate: withdrawalRate, reserveRate: M.DEF.reserveRate,
       shares2887Base: M.DEF.shares2887Base, dividendPerShare2887: M.DEF.dividendPerShare2887,
@@ -145,14 +165,14 @@ test("crash years only affect their configured year, KO gets 0.6x haircut only t
     if (crashYears[row.yr] !== undefined) {
       assert.strictEqual(row.etfRet, crashYears[row.yr]);
     } else {
-      assert.strictEqual(row.etfRet, M.DEF.scen["悲觀"].etf / 100);
+      assert.strictEqual(row.etfRet, PESS.etf / 100);
     }
   });
   // KO haircut only applies in crash years: verify against a manual replay of yr1-3 KO value.
   var ko = M.DEF.holdings["KO"];
-  ko = ko * (1 + M.DEF.scen["悲觀"].ko / 100); // yr1, no crash
-  ko = ko * (1 + M.DEF.scen["悲觀"].ko / 100); // yr2, no crash
-  ko = ko * (1 + M.DEF.scen["悲觀"].ko / 100); // yr3 growth
+  ko = ko * (1 + PESS.ko / 100); // yr1, no crash
+  ko = ko * (1 + PESS.ko / 100); // yr2, no crash
+  ko = ko * (1 + PESS.ko / 100); // yr3 growth
   ko = ko * (1 + (-0.28) * 0.6); // yr3 crash haircut
   assert.ok(Math.abs(rows[2].ko - ko) < 1e-9, "yr3 KO mismatch: " + rows[2].ko + " vs " + ko);
 });
@@ -189,12 +209,12 @@ test("2887 fractional stock-dividend shares are cashed out at face value, not ro
   var base = 176123; // deliberately not a multiple of 10 at a 0.1 元/股 stock dividend rate
   var rate = 0.1;
   var divRate = 1.0;
-  var rows = M.run({
+  var rows = M.run({ withdrawalMode: "fixed",
     holdings: M.DEF.holdings, fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly, livingTarget: M.DEF.livingTarget,
     withdrawalRate: M.DEF.withdrawalRate, reserveRate: M.DEF.reserveRate,
     shares2887Base: base, dividendPerShare2887: divRate, stockDividendPerShare2887: rate,
     koUsdAmount: M.DEF.koUsdAmount, koPriceUsd: M.DEF.koPriceUsd,
-    scenario: M.DEF.scen["中性"], crash: M.DEF.crash, pessimistic: false
+    scenario: M.DEF.scen["中性"], crash: CRASH, pessimistic: false
   });
   var stockDividendValueYuan = base * rate; // 17612.3 元
   var newSharesFloat = stockDividendValueYuan / 10; // 1761.23 股
@@ -233,7 +253,7 @@ test("koPosition floors partial contracts (e.g. 1230 shares -> 12 contracts)", f
 
 // 7. SGOV shortfall borrowing from reserve
 test("SGOV deficit is absorbed by 備用金 and SGOV clamps to 0", function () {
-  var rows = M.run({
+  var rows = M.run({ withdrawalMode: "fixed",
     holdings: Object.assign({}, M.DEF.holdings, { SGOV: 10, "備用金": 500 }),
     fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly, livingTarget: M.DEF.livingTarget,
     withdrawalRate: M.DEF.withdrawalRate, reserveRate: M.DEF.reserveRate,
@@ -241,20 +261,20 @@ test("SGOV deficit is absorbed by 備用金 and SGOV clamps to 0", function () {
     stockDividendPerShare2887: M.DEF.stockDividendPerShare2887,
     koUsdAmount: M.DEF.koUsdAmount, koPriceUsd: M.DEF.koPriceUsd,
     scenario: M.DEF.scen["中性"],
-    crash: M.DEF.crash, pessimistic: false
+    crash: CRASH, pessimistic: false
   });
   var loanAnnual = M.DEF.loanMonthly * 12;
   var sgovInt = 10 * (M.DEF.scen["中性"].sgov / 100);
   var deficit = 10 + sgovInt - loanAnnual;
   assert.ok(deficit < 0, "test setup should produce a deficit");
   assert.strictEqual(rows[0].sgov, 0);
-  assert.ok(Math.abs(rows[0].res - (500 + deficit + rows[0].resInt)) < 1e-9);
+  assert.ok(Math.abs(rows[0].res - (500 + deficit)) < 1e-9);
 });
 
 // 8. Reserve interest — configurable rate, capped at min(balance,100)
 test("備用金 interest capped at min(balance,100) and scales with configurable reserveRate", function () {
   function resIntFor(reserveBalance, reserveRate) {
-    var rows = M.run({
+    var rows = M.run({ withdrawalMode: "fixed",
       holdings: Object.assign({}, M.DEF.holdings, { "備用金": reserveBalance }),
       fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly, livingTarget: M.DEF.livingTarget,
       withdrawalRate: M.DEF.withdrawalRate, reserveRate: reserveRate,
@@ -262,7 +282,7 @@ test("備用金 interest capped at min(balance,100) and scales with configurable
       stockDividendPerShare2887: M.DEF.stockDividendPerShare2887,
       koUsdAmount: M.DEF.koUsdAmount, koPriceUsd: M.DEF.koPriceUsd,
       scenario: M.DEF.scen["中性"],
-      crash: M.DEF.crash, pessimistic: false
+      crash: CRASH, pessimistic: false
     });
     return rows[0];
   }
@@ -281,7 +301,7 @@ test("備用金 interest capped at min(balance,100) and scales with configurable
 
 // 9. Gap-filling condition
 test("reserve gap-filling only triggers when gap>0 and etfRet<-5%", function () {
-  var positiveRows = M.run({
+  var positiveRows = M.run({ withdrawalMode: "fixed",
     holdings: M.DEF.holdings, fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly,
     livingTarget: M.DEF.livingTarget, withdrawalRate: M.DEF.withdrawalRate, reserveRate: M.DEF.reserveRate,
     shares2887Base: M.DEF.shares2887Base, dividendPerShare2887: M.DEF.dividendPerShare2887,
@@ -335,22 +355,261 @@ test("DEF survives JSON deep-clone round-trip", function () {
 test("golden regression: 中性 yr10 net and avg monthly living", function () {
   var rows = runScenario("中性");
   var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / 10 / 12;
-  assert.ok(Math.abs(rows[9].net - 2659.574630373271) < 1e-6, "中性 net10=" + rows[9].net);
+  assert.ok(Math.abs(rows[9].net - 2641.574630373271) < 1e-6, "中性 net10=" + rows[9].net);
   assert.ok(Math.abs(avgMonthly - 5.6305261890157965) < 1e-6, "中性 avgMonthly=" + avgMonthly);
 });
 
 test("golden regression: 悲觀 yr10 net and avg monthly living", function () {
   var rows = runScenario("悲觀");
   var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / 10 / 12;
-  assert.ok(Math.abs(rows[9].net - 1286.7876598772455) < 1e-6, "悲觀 net10=" + rows[9].net);
-  assert.ok(Math.abs(avgMonthly - 5.064069340714613) < 1e-6, "悲觀 avgMonthly=" + avgMonthly);
+  assert.ok(Math.abs(rows[9].net - 1271.368383682362) < 1e-6, "悲觀 net10=" + rows[9].net);
+  assert.ok(Math.abs(avgMonthly - 5.057981478584261) < 1e-6, "悲觀 avgMonthly=" + avgMonthly);
 });
 
 test("golden regression: 樂觀 yr10 net and avg monthly living", function () {
   var rows = runScenario("樂觀");
   var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / 10 / 12;
-  assert.ok(Math.abs(rows[9].net - 3898.8308566049614) < 1e-6, "樂觀 net10=" + rows[9].net);
+  assert.ok(Math.abs(rows[9].net - 3880.8308566049614) < 1e-6, "樂觀 net10=" + rows[9].net);
   assert.ok(Math.abs(avgMonthly - 6.8867974697579335) < 1e-6, "樂觀 avgMonthly=" + avgMonthly);
+});
+
+// ===== 提領設定獨立後的新測試 =====
+test("applyWithdrawal: rate 0 is a pure growth step with ratio 1", function () {
+  var r = W.applyWithdrawal(100, 0.07, 0);
+  assert.ok(Math.abs(r.end - 107) < 1e-12);
+  assert.strictEqual(r.withdrawn, 0);
+  assert.strictEqual(r.ratio, 1);
+});
+
+test("applyWithdrawal: withdrawn = start*rate, end matches monthlyWithdrawalBalance, ratio = end/noWithdrawEnd", function () {
+  var r = W.applyWithdrawal(300, 0.07, 0.04);
+  assert.ok(Math.abs(r.withdrawn - 12) < 1e-12);
+  assert.ok(Math.abs(r.end - W.monthlyWithdrawalBalance(300, 0.07, 0.04)) < 1e-12);
+  assert.ok(Math.abs(r.ratio - r.end / (300 * 1.07)) < 1e-12);
+  assert.ok(r.ratio > 0 && r.ratio < 1);
+});
+
+test("applyWithdrawal: a pool that runs dry clamps at 0 and only withdraws what exists", function () {
+  var r = W.applyWithdrawal(100, -0.5, 0.9);
+  assert.ok(r.end >= 0, "end=" + r.end);
+  assert.ok(r.withdrawn < 100 * 0.9, "withdrawn=" + r.withdrawn);
+  assert.ok(r.withdrawn <= 100 + 1e-9);
+  assert.ok(r.ratio >= 0 && r.ratio <= 1);
+});
+
+test("default run() is 30 years with sequential year numbers", function () {
+  var DEF = M.DEF;
+  var rows = M.run({ withdrawalMode: "fixed",
+    holdings: DEF.holdings, fx: DEF.fx, loanMonthly: DEF.loanMonthly, livingTarget: DEF.livingTarget,
+    withdrawalRate: DEF.withdrawalRate, withdrawalRate2887: DEF.withdrawalRate2887, withdrawalRateKo: DEF.withdrawalRateKo,
+    reserveRate: DEF.reserveRate, shares2887Base: DEF.shares2887Base, dividendPerShare2887: DEF.dividendPerShare2887,
+    stockDividendPerShare2887: DEF.stockDividendPerShare2887, koUsdAmount: DEF.koUsdAmount, koPriceUsd: DEF.koPriceUsd,
+    scenario: DEF.scen["中性"], crash: CRASH, pessimistic: false
+  });
+  assert.strictEqual(rows.length, 30);
+  rows.forEach(function (r, i) { assert.strictEqual(r.yr, i + 1); });
+});
+
+test("years param controls row count (10 / 30 / 50)", function () {
+  [10, 30, 50].forEach(function (n) {
+    assert.strictEqual(runScenario("中性", { years: n }).length, n);
+  });
+});
+
+test("first 10 years of a 30-year run equal a 10-year run (horizon doesn't change earlier years)", function () {
+  var a = runScenario("中性", { years: 10, withdrawalRate2887: 4, withdrawalRateKo: 4 });
+  var b = runScenario("中性", { years: 30, withdrawalRate2887: 4, withdrawalRateKo: 4 });
+  for (var i = 0; i < 10; i++) assert.ok(Math.abs(a[i].net - b[i].net) < 1e-9, "yr " + (i + 1));
+});
+
+test("2887 withdrawal: withdrawn = start value * rate in year 1, goes into living, and reduces share count", function () {
+  var base = runScenario("中性", { withdrawalRate2887: 0 });
+  var wd = runScenario("中性", { withdrawalRate2887: 4 });
+  assert.ok(Math.abs(wd[0].wd2887 - M.DEF.holdings["2887"] * 0.04) < 1e-9);
+  assert.strictEqual(base[0].wd2887, 0);
+  assert.ok(wd[0].shares2887Total < base[0].shares2887Total);
+  assert.ok(wd[0].div2887 < base[0].div2887 + 1e-9);
+  assert.ok(Math.abs((wd[0].living - base[0].living) - (wd[0].wd2887 + (wd[0].div2887 - base[0].div2887))) < 1e-9);
+  assert.ok(wd[9].s2887 < base[9].s2887);
+});
+
+test("KO withdrawal: withdrawn = start value * rate in year 1, contracts shrink and call income falls", function () {
+  var base = runScenario("中性", { withdrawalRateKo: 0 });
+  var wd = runScenario("中性", { withdrawalRateKo: 4 });
+  assert.ok(Math.abs(wd[0].koWd - M.DEF.holdings["KO"] * 0.04) < 1e-9);
+  assert.strictEqual(base[0].koWd, 0);
+  var bigKo = runScenario("中性", { withdrawalRateKo: 50, years: 5 });
+  assert.ok(bigKo[4].koContracts < bigKo[0].koContracts || bigKo[0].koContracts < base[0].koContracts);
+  assert.ok(bigKo[4].call < base[4].call);
+  assert.ok(wd[9].koContracts <= base[9].koContracts);
+  assert.ok(wd[9].ko < base[9].ko);
+});
+
+test("KO contracts are always floor(remaining shares/100)", function () {
+  var rows = runScenario("中性", { years: 30, withdrawalRateKo: 4 });
+  rows.forEach(function (r) { assert.strictEqual(r.koContracts, Math.floor(r.koShares / 100)); });
+});
+
+test("all three pools withdraw: living = etfWd + wd2887 + koWd + div + call + resInt (+ gap fill)", function () {
+  var rows = runScenario("中性", { years: 30, withdrawalRate2887: 4, withdrawalRateKo: 4 });
+  rows.forEach(function (r) {
+    var parts = r.etfWd + r.wd2887 + r.koWd + r.div2887 + r.call + r.resInt + r.usedRes;
+    assert.ok(Math.abs(r.living - parts) < 1e-9, "yr " + r.yr);
+  });
+});
+
+test("loanYears: loan payments stop after loanYears, net===assets afterwards", function () {
+  var rows = runScenario("中性", { years: 30, loanYears: 10 });
+  assert.ok(rows[9].loanPay > 0);
+  assert.strictEqual(rows[10].loanPay, 0);
+  assert.strictEqual(rows[29].loanPay, 0);
+  assert.ok(Math.abs(rows[29].net - rows[29].assets) < 1e-9);
+  var long = runScenario("中性", { years: 30, loanYears: 30 });
+  assert.ok(long[29].loanPay > 0);
+  assert.ok(Math.abs(long[29].net - long[29].assets) < 1e-9);
+});
+
+test("30-year defaults (all pools 4%) stay finite and non-negative in all three scenarios", function () {
+  ["樂觀", "中性", "悲觀"].forEach(function (name) {
+    var rows = runScenario(name, { years: 30, withdrawalRate2887: 4, withdrawalRateKo: 4 });
+    rows.forEach(function (r) {
+      [r.etf, r.ko, r.s2887, r.sgov, r.res, r.assets, r.net, r.living].forEach(function (x) {
+        assert.ok(isFinite(x), name + " yr" + r.yr);
+      });
+      assert.ok(r.etf >= 0 && r.ko >= 0 && r.s2887 >= 0 && r.res >= -1e-9, name + " yr" + r.yr);
+    });
+  });
+});
+
+// ===== 通膨率 + 目標提領率（由生活費目標反推）=====
+function runTarget(name, overrides) {
+  var o = Object.assign({ withdrawalMode: "target", inflation: 2, years: 30 }, overrides || {});
+  return runScenario(name, o);
+}
+
+test("DEF inflation default is 2%", function () {
+  assert.strictEqual(M.DEF.inflation, 2);
+});
+
+test("living target grows by inflation each year (yr1 = base)", function () {
+  var rows = runTarget("中性", { inflation: 2 });
+  assert.ok(Math.abs(rows[0].target - 120) < 1e-12);
+  assert.ok(Math.abs(rows[1].target - 120 * 1.02) < 1e-9);
+  assert.ok(Math.abs(rows[29].target - 120 * Math.pow(1.02, 29)) < 1e-9);
+  var flat = runTarget("中性", { inflation: 0 });
+  assert.ok(Math.abs(flat[29].target - 120) < 1e-12);
+});
+
+test("target mode: every year living meets the target (no overshoot) unless the rate hit 0% or the 100% cap", function () {
+  ["樂觀", "中性", "悲觀"].forEach(function (name) {
+    runTarget(name).forEach(function (r) {
+      assert.ok(r.living >= r.target - 1e-9 || r.wr >= 1 || r.usedRes > 0, name + " yr" + r.yr + " living=" + r.living + " target=" + r.target);
+      if (r.wr > 0 && r.wr < 1) assert.ok(r.living - r.target < 0.05, name + " yr" + r.yr + " overshoot=" + (r.living - r.target));
+    });
+  });
+});
+
+test("target mode: same rate applies to 0050+006208 and 2887; KO never withdraws", function () {
+  var rows = runTarget("中性");
+  var r = rows[0];
+  assert.ok(r.wr > 0 && r.wr < 1);
+  assert.ok(Math.abs(r.etfWd - 630 * r.wr) < 1e-9);
+  assert.ok(Math.abs(r.wd2887 - M.DEF.holdings["2887"] * r.wr) < 1e-9);
+  assert.ok(r.wd2887 > 0);
+  rows.forEach(function (x) {
+    assert.strictEqual(x.koWd, 0, "yr" + x.yr);
+    assert.strictEqual(x.koContracts, rows[0].koContracts, "KO contracts stay constant, yr" + x.yr);
+  });
+  // KO 不提領：yr1 市值 = 起始 × (1 + ko%)
+  assert.ok(Math.abs(rows[0].ko - M.DEF.holdings["KO"] * 1.02) < 1e-9);
+});
+
+test("target mode: higher inflation requires higher or equal withdrawal rates in later years", function () {
+  var a = runTarget("中性", { inflation: 0 });
+  var b = runTarget("中性", { inflation: 4 });
+  assert.ok(b[4].wr > a[4].wr); // 第 5 年：兩者都尚未碰到 100% 上限
+  // 淨值比較取兩者資金都尚未耗盡的第 15 年（後期兩者的提領池都可能被領光，淨值趨近而失去比較意義）
+  assert.ok(b[14].net < a[14].net);
+});
+
+test("target mode: tiny target -> rate 0; impossible target -> rate capped at 100%", function () {
+  var tiny = runTarget("中性", { livingTarget: 0.001, years: 3 });
+  tiny.forEach(function (r) { assert.strictEqual(r.wr, 0); assert.strictEqual(r.etfWd, 0); });
+  var huge = runTarget("中性", { livingTarget: 100000, years: 2 });
+  assert.strictEqual(huge[0].wr, 1);
+  assert.ok(huge[0].etf >= 0 && isFinite(huge[0].net));
+});
+
+test("target mode: crash year raises the required rate vs a normal year only through the target, not the pool formula", function () {
+  var rows = runTarget("悲觀");
+  rows.forEach(function (r) { assert.ok(isFinite(r.wr) && r.wr >= 0 && r.wr <= 1); });
+});
+
+test("solveTargetRate: monotone toy function returns smallest satisfying rate; handles 0 and cap", function () {
+  var f = function (r) { return 10 + 100 * r; };
+  assert.strictEqual(W.solveTargetRate(f, 5), 0);
+  var r = W.solveTargetRate(f, 30);
+  assert.ok(Math.abs(r - 0.2) < 1e-6 && f(r) >= 30);
+  assert.strictEqual(W.solveTargetRate(f, 1000), 1);
+});
+
+test("fixed mode still reproduces legacy behaviour (explicit opt-in)", function () {
+  var rows = runScenario("中性");
+  assert.ok(Math.abs(rows[0].wr - 0.04) < 1e-12);
+});
+
+test("備用金 interest is spent as living, not compounded: balance stays flat when no SGOV deficit and no gap fill", function () {
+  var rows = runScenario("中性");
+  rows.forEach(function (r) {
+    assert.ok(Math.abs(r.res - M.DEF.holdings["備用金"]) < 1e-9, "yr" + r.yr + " res=" + r.res);
+  });
+  var t = runTarget("中性");
+  var prev = M.DEF.holdings["備用金"];
+  t.forEach(function (r) {
+    assert.ok(Math.abs(r.res - (prev - r.usedRes)) < 1e-9, "yr" + r.yr);
+    prev = r.res;
+  });
+});
+
+test("target mode: 備用金 fills the gap in ANY year when the target is unreachable (not only crash years)", function () {
+  var rows = runTarget("中性");
+  var used = rows.filter(function (r) { return r.usedRes > 0; });
+  assert.ok(used.length > 0, "reserve should be used in the neutral scenario's late years");
+  used.forEach(function (r) {
+    assert.ok(r.etfRet >= -0.05, "non-crash year yr" + r.yr);
+    assert.ok(r.usedRes <= r.target - (r.living - r.usedRes) + 1e-9);
+    assert.ok(Math.abs(r.living - r.target) < 1e-6 || r.res < 1e-9, "yr" + r.yr);
+  });
+  // years without any gap never touch the reserve
+  rows.filter(function (r) { return r.wr < 1; }).forEach(function (r) { assert.strictEqual(r.usedRes, 0, "yr" + r.yr); });
+});
+
+test("shortfall = target - living once the reserve is also exhausted; 0 otherwise", function () {
+  var rows = runTarget("悲觀");
+  rows.forEach(function (r) {
+    assert.ok(Math.abs(r.shortfall - Math.max(0, r.target - r.living)) < 1e-9, "yr" + r.yr);
+    if (r.shortfall > 1e-6) assert.ok(r.res < 1e-9, "shortfall only when reserve is empty, yr" + r.yr);
+  });
+  assert.ok(rows.some(function (r) { return r.shortfall > 0; }), "悲觀 30y should eventually fall short");
+});
+
+test("2887 scenario % is total return incl. dividends: value growth = total return - cash dividend (target mode)", function () {
+  // 目標極小 → 提領率 0，單純檢視年度市值變化
+  var rows = runTarget("中性", { livingTarget: 0.001, years: 3 });
+  var v = M.DEF.holdings["2887"];
+  rows.forEach(function (r) {
+    assert.strictEqual(r.wd2887, 0);
+    var expected = v * 1.03 - r.div2887;
+    assert.ok(Math.abs(r.s2887 - expected) < 1e-9, "yr" + r.yr + " got=" + r.s2887 + " expected=" + expected);
+    v = r.s2887;
+  });
+});
+
+test("2887 price growth is lower than total return by roughly the cash dividend yield; fixed mode keeps legacy full-return growth", function () {
+  var target = runTarget("樂觀", { livingTarget: 0.001, years: 1 })[0];
+  var fixed = runScenario("樂觀", { years: 1 })[0];
+  assert.ok(Math.abs(fixed.s2887 - 633 * 1.08) < 1e-9);
+  assert.ok(Math.abs((fixed.s2887 - target.s2887) - target.div2887) < 1e-9);
 });
 
 console.log("\n" + passed + " passed, " + failed + " failed");

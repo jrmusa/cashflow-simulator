@@ -3,7 +3,7 @@
 
   var STORAGE_KEY = "cfm";
   var THEME_KEY = "cfm-theme";
-  var SCEN_COLORS = { "樂觀": "#34C759", "中性": "#8E8E93", "悲觀": "#FF3B30" };
+  var SCEN_COLORS = { "樂觀": "#34C759", "中性": "#8E8E93" };
   var HOLDING_COLORS = ["#0A84FF", "#34C759", "#FF9F0A", "#FF375F", "#BF5AF2", "#8E8E93"];
 
   // KO 每股市價即時報價（Finnhub 免費額度）。Key 綁定固定網域使用，屬公開唯讀報價 API。
@@ -55,6 +55,13 @@
               delete scenario.callPerContract;
             }
           });
+          // 提領設定獨立後新增的欄位（通膨率、推演年數、貸款年限）：舊資料補預設值。
+          ["inflation", "years", "loanYears"].forEach(function (k) {
+            if (typeof parsed[k] !== "number") parsed[k] = CFMModel.DEF[k];
+          });
+          // 悲觀情境與股災設定已移除：清掉舊 localStorage 內的殘留資料。
+          if (parsed.scen) delete parsed.scen["悲觀"];
+          delete parsed.crash;
           // holdings.KO used to be a manually-entered market value; it's now always derived
           // from 總投入金額(USD) × 匯率, so stale/manual values are recomputed on load.
           parsed.holdings = parsed.holdings || {};
@@ -173,11 +180,29 @@
       });
       container.appendChild(field.el);
     });
-    var wrField = createStepperInput({
-      id: "g_wr", label: "提領%", value: S.withdrawalRate, min: 0, max: 100, step: 0.5, decimals: 1,
-      onChange: function (v) { S.withdrawalRate = v; scheduleRecalc(); }
-    });
-    container.appendChild(wrField.el);
+  }
+
+  // ===== 提領設定（獨立分頁）：月生活費目標、通膨率、推演年數 =====
+  function buildWithdrawalInputs() {
+    var container = document.getElementById("withdrawalInputs");
+    container.innerHTML = "";
+    container.appendChild(createStepperInput({
+      id: "g_lt", label: "月生活費目標(萬)", value: roundTo(S.livingTarget / 12, 1), min: 0, step: 1, decimals: 1,
+      onChange: function (v) { S.livingTarget = v * 12; scheduleRecalc(); }
+    }).el);
+    container.appendChild(createStepperInput({
+      id: "g_infl", label: "通膨率%", value: S.inflation, min: 0, max: 30, step: 0.5, decimals: 1,
+      onChange: function (v) { S.inflation = v; scheduleRecalc(); }
+    }).el);
+  }
+
+  function buildHorizonInputs() {
+    var container = document.getElementById("horizonInputs");
+    container.innerHTML = "";
+    container.appendChild(createStepperInput({
+      id: "g_years", label: "推演年數", value: S.years, min: 1, max: CFMWithdrawal.MAX_YEARS, step: 1, decimals: 0,
+      onChange: function (v) { S.years = v; scheduleRecalc(); }
+    }).el);
   }
 
   function build2887Inputs() {
@@ -329,7 +354,9 @@
       { id: "h_SGOV", label: "市值(萬)", value: S.holdings["SGOV"], min: 0, step: 10, decimals: 0,
         onChange: function (v) { S.holdings["SGOV"] = v; scheduleRecalc(); } },
       { id: "g_lm", label: "貸款月付(萬)", value: S.loanMonthly, min: 0, step: 0.1, decimals: 4,
-        onChange: function (v) { S.loanMonthly = v; scheduleRecalc(); } }
+        onChange: function (v) { S.loanMonthly = v; scheduleRecalc(); } },
+      { id: "g_ly", label: "貸款年限(年)", value: S.loanYears, min: 0, max: CFMWithdrawal.MAX_YEARS, step: 1, decimals: 0,
+        onChange: function (v) { S.loanYears = v; scheduleRecalc(); } }
     ];
     configs.forEach(function (cfg) {
       container.appendChild(createStepperInput(cfg).el);
@@ -355,9 +382,7 @@
     container.innerHTML = "";
     var configs = [
       { id: "g_fx", label: "匯率 USD/TWD", value: S.fx, min: 0.01, step: 0.1, decimals: 2,
-        onChange: function (v) { S.fx = v; syncKoHoldingValue(); updateKoInfo(); scheduleRecalc(); } },
-      { id: "g_lt", label: "月生活費目標(萬)", value: roundTo(S.livingTarget / 12, 1), min: 0, step: 1, decimals: 1,
-        onChange: function (v) { S.livingTarget = v * 12; scheduleRecalc(); } }
+        onChange: function (v) { S.fx = v; syncKoHoldingValue(); updateKoInfo(); scheduleRecalc(); } }
     ];
     configs.forEach(function (cfg) {
       container.appendChild(createStepperInput(cfg).el);
@@ -402,33 +427,16 @@
     });
   }
 
-  function buildCrashInputs() {
-    var container = document.getElementById("crash");
-    container.innerHTML = "";
-    var configs = [
-      { id: "c_y1", label: "股災1 年", value: S.crash.y1, min: 1, max: 10, step: 1, decimals: 0,
-        onChange: function (v) { S.crash.y1 = v; scheduleRecalc(); } },
-      { id: "c_m1", label: "股災1 跌幅%", value: S.crash.m1, min: -100, max: 0, step: 1, decimals: 0,
-        onChange: function (v) { S.crash.m1 = v; scheduleRecalc(); } },
-      { id: "c_y2", label: "股災2 年", value: S.crash.y2, min: 1, max: 10, step: 1, decimals: 0,
-        onChange: function (v) { S.crash.y2 = v; scheduleRecalc(); } },
-      { id: "c_m2", label: "股災2 跌幅%", value: S.crash.m2, min: -100, max: 0, step: 1, decimals: 0,
-        onChange: function (v) { S.crash.m2 = v; scheduleRecalc(); } }
-    ];
-    configs.forEach(function (cfg) {
-      container.appendChild(createStepperInput(cfg).el);
-    });
-  }
-
   function buildAllInputs() {
     buildEtfInputs();
+    buildWithdrawalInputs();
+    buildHorizonInputs();
     build2887Inputs();
     buildKoInputs();
     buildSgovInputs();
     buildReserveInputs();
     buildGlobalInputs();
     buildScenarioTable();
-    buildCrashInputs();
   }
 
   // ===== Tab navigation =====
@@ -517,7 +525,7 @@
     var gridColor = cssVar("--ios-separator");
 
     var labels = [];
-    for (var i = 1; i <= 10; i++) labels.push("第" + i + "年");
+    for (var i = 1; i <= S.years; i++) labels.push("第" + i + "年");
     var datasets = Object.keys(results).map(function (name) {
       var color = SCEN_COLORS[name];
       return {
@@ -558,8 +566,8 @@
     container.innerHTML = "";
     Object.keys(results).forEach(function (name, idx) {
       var rows = results[name];
-      var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / 10 / 12;
-      var endNet = rows[9].net;
+      var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / rows.length / 12;
+      var endNet = rows[rows.length - 1].net;
       var color = SCEN_COLORS[name];
 
       var card = document.createElement("div");
@@ -584,7 +592,7 @@
 
       var subLiving = document.createElement("div");
       subLiving.className = "sub";
-      subLiving.textContent = "平均生活費";
+      subLiving.textContent = "平均生活費（" + rows.length + " 年）";
       card.appendChild(subLiving);
 
       var bigNet = document.createElement("div");
@@ -598,7 +606,7 @@
 
       var subNet = document.createElement("div");
       subNet.className = "sub";
-      subNet.textContent = "期末淨值(萬)";
+      subNet.textContent = "第 " + rows.length + " 年期末淨值(萬)";
       card.appendChild(subNet);
 
       container.appendChild(card);
@@ -630,20 +638,20 @@
       p1.textContent = "各投資池對應現金流（萬/年）";
       block.appendChild(p1);
 
-      var tot = { etfWd: 0, div2887: 0, call: 0, resInt: 0, usedRes: 0, living: 0, loanPay: 0 };
-      var rowsHtml = "<tr><th>年</th><th>0050+006208<br>提領</th><th>2887<br>現金股利</th><th>KO<br>Covered Call</th><th>備用金<br>利息</th><th>備用金<br>補缺口</th><th>生活費<br>合計</th><th>SGOV→<br>還貸</th></tr>";
+      var tot = { shortfall: 0, etfWd: 0, wd2887: 0, div2887: 0, call: 0, resInt: 0, usedRes: 0, living: 0, loanPay: 0 };
+      var rowsHtml = "<tr><th>年</th><th>月生活費<br>目標</th><th>目標<br>提領率</th><th>0050+006208<br>提領</th><th>2887<br>提領</th><th>2887<br>現金股利</th><th>KO<br>Covered Call</th><th>備用金<br>利息</th><th>備用金<br>補缺口</th><th>生活費<br>合計</th><th>未達標<br>缺口</th><th>SGOV→<br>還貸</th></tr>";
       rows.forEach(function (x) {
         var rc = x.etfRet < 0 ? ' class="neg"' : '';
         var uc = x.usedRes > 0 ? ' class="neg"' : '';
-        rowsHtml += "<tr><td" + rc + ">" + x.yr + "</td><td>" + x.etfWd.toFixed(1) + "</td><td>" + x.div2887.toFixed(1) + "</td>" +
+        rowsHtml += "<tr><td" + rc + ">" + x.yr + "</td><td>" + (x.target / 12).toFixed(2) + "</td><td" + (x.wr >= 1 ? ' class="neg"' : '') + "><strong>" + (x.wr * 100).toFixed(2) + "%</strong></td><td>" + x.etfWd.toFixed(1) + "</td><td>" + x.wd2887.toFixed(1) + "</td><td>" + x.div2887.toFixed(1) + "</td>" +
           "<td>" + x.call.toFixed(1) + "</td><td>" + x.resInt.toFixed(1) + "</td><td" + uc + ">" + x.usedRes.toFixed(1) + "</td>" +
-          "<td><strong>" + x.living.toFixed(1) + "</strong></td><td>" + x.loanPay.toFixed(1) + "</td></tr>";
-        tot.etfWd += x.etfWd; tot.div2887 += x.div2887; tot.call += x.call; tot.resInt += x.resInt;
-        tot.usedRes += x.usedRes; tot.living += x.living; tot.loanPay += x.loanPay;
+          "<td><strong>" + x.living.toFixed(1) + "</strong></td><td" + (x.shortfall > 0.05 ? ' class="neg"' : '') + ">" + x.shortfall.toFixed(1) + "</td><td>" + x.loanPay.toFixed(1) + "</td></tr>";
+        tot.etfWd += x.etfWd; tot.wd2887 += x.wd2887; tot.div2887 += x.div2887; tot.call += x.call; tot.resInt += x.resInt;
+        tot.usedRes += x.usedRes; tot.shortfall += x.shortfall; tot.living += x.living; tot.loanPay += x.loanPay;
       });
-      rowsHtml += "<tr><th>10年合計</th><th>" + tot.etfWd.toFixed(0) + "</th><th>" + tot.div2887.toFixed(0) + "</th>" +
+      rowsHtml += "<tr><th>" + rows.length + "年合計</th><th>—</th><th>—</th><th>" + tot.etfWd.toFixed(0) + "</th><th>" + tot.wd2887.toFixed(0) + "</th><th>" + tot.div2887.toFixed(0) + "</th>" +
         "<th>" + tot.call.toFixed(0) + "</th><th>" + tot.resInt.toFixed(0) + "</th><th>" + tot.usedRes.toFixed(0) + "</th>" +
-        "<th>" + tot.living.toFixed(0) + "</th><th>" + tot.loanPay.toFixed(0) + "</th></tr>";
+        "<th>" + tot.living.toFixed(0) + "</th><th>" + tot.shortfall.toFixed(0) + "</th><th>" + tot.loanPay.toFixed(0) + "</th></tr>";
 
       var scroll1 = document.createElement("div");
       scroll1.className = "table-scroll";
@@ -658,11 +666,11 @@
       p2.textContent = "資產與淨值推演（萬）";
       block.appendChild(p2);
 
-      var rows2Html = "<tr><th>年</th><th>ETF報酬</th><th>提領%</th><th>ETF值</th><th>KO值</th><th>2887值</th><th>2887<br>總股數</th><th>SGOV</th><th>備用金</th><th>備用金<br>利率%</th><th>總資產</th><th>淨值</th></tr>";
+      var rows2Html = "<tr><th>年</th><th>ETF報酬</th><th>ETF值</th><th>KO值</th><th>KO<br>口數</th><th>2887值</th><th>2887<br>總股數</th><th>SGOV</th><th>備用金</th><th>備用金<br>利率%</th><th>總資產</th><th>淨值</th></tr>";
       rows.forEach(function (x) {
         var rc = x.etfRet < 0 ? ' class="neg"' : '';
-        rows2Html += "<tr><td>" + x.yr + "</td><td" + rc + ">" + (x.etfRet * 100).toFixed(0) + "%</td><td>" + (x.wr * 100).toFixed(1) + "%</td>" +
-          "<td>" + x.etf.toFixed(0) + "</td><td>" + x.ko.toFixed(0) + "</td><td>" + x.s2887.toFixed(0) + "</td>" +
+        rows2Html += "<tr><td>" + x.yr + "</td><td" + rc + ">" + (x.etfRet * 100).toFixed(0) + "%</td>" +
+          "<td>" + x.etf.toFixed(0) + "</td><td>" + x.ko.toFixed(0) + "</td><td>" + x.koContracts + "</td><td>" + x.s2887.toFixed(0) + "</td>" +
           "<td>" + x.shares2887Total.toLocaleString() + "</td>" +
           "<td>" + x.sgov.toFixed(0) + "</td><td>" + x.res.toFixed(0) + "</td>" +
           "<td>" + (x.resRate * 100).toFixed(2) + "%</td>" +
@@ -690,7 +698,10 @@
         fx: S.fx,
         loanMonthly: S.loanMonthly,
         livingTarget: S.livingTarget,
-        withdrawalRate: S.withdrawalRate,
+        withdrawalMode: "target",
+        inflation: S.inflation,
+        years: S.years,
+        loanYears: S.loanYears,
         reserveRate: S.reserveRate,
         shares2887Base: S.shares2887Base,
         dividendPerShare2887: S.dividendPerShare2887,
@@ -698,8 +709,7 @@
         koUsdAmount: S.koUsdAmount,
         koPriceUsd: S.koPriceUsd,
         scenario: S.scen[name],
-        crash: S.crash,
-        pessimistic: name === "悲觀"
+        pessimistic: false
       });
     });
     return results;
