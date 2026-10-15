@@ -65,7 +65,10 @@
           // holdings.KO used to be a manually-entered market value; it's now always derived
           // from 總投入金額(USD) × 匯率, so stale/manual values are recomputed on load.
           parsed.holdings = parsed.holdings || {};
-          parsed.holdings["KO"] = (parsed.koUsdAmount * parsed.fx) / CFMModel.FXk;
+          parsed.holdings["KO"] = CFMModel.valueKo(parsed.koUsdAmount, parsed.fx);
+          // 2887 市值改由「原始股數 × 每股市價」推得：舊資料沒有每股市價時補預設值並重算市值。
+          if (typeof parsed.price2887 !== "number") parsed.price2887 = CFMModel.DEF.price2887;
+          parsed.holdings["2887"] = CFMModel.value2887(parsed.shares2887Base, parsed.price2887);
           return parsed;
         }
       }
@@ -209,19 +212,38 @@
     var container = document.getElementById("s2887Inputs");
     container.innerHTML = "";
     var configs = [
-      { id: "h_2887", label: "市值(萬)", value: S.holdings["2887"], min: 0, step: 10, decimals: 0,
-        onChange: function (v) { S.holdings["2887"] = v; scheduleRecalc(); } },
+      { id: "p_2887", label: "每股市價(元)", value: S.price2887, min: 0.01, step: 0.5, decimals: 2,
+        onChange: function (v) { S.price2887 = v; sync2887HoldingValue(); update2887Info(); scheduleRecalc(); } },
       { id: "s2887_base", label: "原始股數", value: S.shares2887Base, min: 0, step: 1000, decimals: 0,
         formatDisplay: function (v) { return v.toLocaleString(); },
-        onChange: function (v) { S.shares2887Base = v; scheduleRecalc(); } },
+        onChange: function (v) { S.shares2887Base = v; sync2887HoldingValue(); update2887Info(); scheduleRecalc(); } },
       { id: "s2887_div", label: "平均年配息(元/股)", value: S.dividendPerShare2887, min: 0, step: 0.1, decimals: 2,
-        onChange: function (v) { S.dividendPerShare2887 = v; scheduleRecalc(); } },
+        onChange: function (v) { S.dividendPerShare2887 = v; update2887Info(); scheduleRecalc(); } },
       { id: "s2887_grant", label: "平均年配股(元)", value: S.stockDividendPerShare2887, min: 0, step: 0.1, decimals: 2,
         onChange: function (v) { S.stockDividendPerShare2887 = v; scheduleRecalc(); } }
     ];
     configs.forEach(function (cfg) {
       container.appendChild(createStepperInput(cfg).el);
     });
+    var info = document.createElement("p");
+    info.className = "small ko-info";
+    info2887El = info;
+    container.appendChild(info);
+    sync2887HoldingValue();
+    update2887Info();
+  }
+
+  // holdings["2887"] 為推導值：原始股數 × 每股市價 ÷ 10000（萬），與 KO 一致，避免市值與股數、股價矛盾。
+  var info2887El = null;
+  function sync2887HoldingValue() {
+    S.holdings["2887"] = CFMModel.value2887(S.shares2887Base, S.price2887);
+  }
+  function update2887Info() {
+    if (!info2887El) return;
+    var value = S.holdings["2887"];
+    var yieldPct = S.price2887 > 0 ? (S.dividendPerShare2887 / S.price2887) * 100 : 0;
+    info2887El.textContent = "自動計算：市值約 " + Math.round(value).toLocaleString() + " 萬（原始股數 × 每股市價）；現金殖利率約 " +
+      yieldPct.toFixed(2) + "%（平均年配息 ÷ 每股市價）";
   }
 
   // holdings["KO"] is no longer entered directly — it's the TWD-萬 market value used for

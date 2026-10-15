@@ -51,8 +51,9 @@ function runScenario(name, overrides) {
 
 // 1. Default integrity
 test("DEF constants match reference exactly", function () {
-  assert.deepStrictEqual(M.DEF.holdings, { "0050": 300, "006208": 330, "2887": 633, "KO": 590, "SGOV": 330, "備用金": 180 });
-  assert.strictEqual(M.DEF.fx, 32.4);
+  assert.deepStrictEqual(M.DEF.holdings, { "0050": 300, "006208": 330, "2887": 750.64, "KO": 256.56, "SGOV": 330, "備用金": 180 });
+  assert.strictEqual(M.DEF.fx, 32.07);
+  assert.strictEqual(M.DEF.price2887, 42.65);
   assert.strictEqual(M.DEF.loanMonthly, 2.8999);
   assert.strictEqual(M.DEF.livingTarget, 120);
   assert.strictEqual(M.DEF.withdrawalRate, 4);
@@ -62,11 +63,18 @@ test("DEF constants match reference exactly", function () {
   assert.strictEqual(M.DEF.stockDividendPerShare2887, 0.1);
   assert.strictEqual(M.DEF.koUsdAmount, 80000);
   assert.strictEqual(M.DEF.koPriceUsd, 91.05);
-  assert.deepStrictEqual(M.DEF.scen["樂觀"], { etf: 11, tw: 8, ko: 6, sgov: 3.8, callPricePerShare: 0.9 });
-  assert.deepStrictEqual(M.DEF.scen["中性"], { etf: 7, tw: 3, ko: 2, sgov: 3.5, callPricePerShare: 0.6 });
+  assert.deepStrictEqual(M.DEF.scen["樂觀"], { etf: 11, tw: 8, ko: 3, sgov: 3.65, callPricePerShare: 0.8 });
+  assert.deepStrictEqual(M.DEF.scen["中性"], { etf: 7, tw: 3, ko: 2, sgov: 3.0, callPricePerShare: 0.6 });
   assert.deepStrictEqual(Object.keys(M.DEF.scen), ["樂觀", "中性"]);
   assert.strictEqual(M.DEF.crash, undefined);
   assert.strictEqual(M.FXk, 10000);
+});
+
+test("DEF holdings for 2887 and KO are derived from shares x price and USD x fx (no contradictory market values)", function () {
+  assert.ok(Math.abs(M.DEF.holdings["2887"] - M.value2887(M.DEF.shares2887Base, M.DEF.price2887)) < 0.005);
+  assert.ok(Math.abs(M.DEF.holdings["KO"] - M.valueKo(M.DEF.koUsdAmount, M.DEF.fx)) < 0.005);
+  assert.strictEqual(M.value2887(100000, 40), 400);
+  assert.strictEqual(M.valueKo(10000, 32), 32);
 });
 
 test("DEF new withdrawal/horizon defaults: 4% per pool, 30 years, loan 10 years", function () {
@@ -349,28 +357,28 @@ test("DEF survives JSON deep-clone round-trip", function () {
   assert.notStrictEqual(cloned.holdings, M.DEF.holdings);
 });
 
-// 13. Golden regression (captured from this model's own reference-faithful run, after
+// 13. Golden regression（2026-10 預設值校準後重新擷取：2887 市值=股數×股價、KO 市值=美元×匯率、新匯率/情境）(captured from this model's own reference-faithful run, after
 // koUsdAmount default dropped to 80000 USD / 91.05 USD = 878.6 shares -> 8 contracts,
 // x 100 shares/contract x callPricePerShare 0.9/0.6/0.3).
 test("golden regression: 中性 yr10 net and avg monthly living", function () {
   var rows = runScenario("中性");
   var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / 10 / 12;
-  assert.ok(Math.abs(rows[9].net - 2641.574630373271) < 1e-6, "中性 net10=" + rows[9].net);
-  assert.ok(Math.abs(avgMonthly - 5.6305261890157965) < 1e-6, "中性 avgMonthly=" + avgMonthly);
+  assert.ok(Math.abs(rows[9].net - 2380.515428948053) < 1e-6, "中性 net10=" + rows[9].net);
+  assert.ok(Math.abs(avgMonthly - 5.614686189015796) < 1e-6, "中性 avgMonthly=" + avgMonthly);
 });
 
 test("golden regression: 悲觀 yr10 net and avg monthly living", function () {
   var rows = runScenario("悲觀");
   var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / 10 / 12;
-  assert.ok(Math.abs(rows[9].net - 1271.368383682362) < 1e-6, "悲觀 net10=" + rows[9].net);
-  assert.ok(Math.abs(avgMonthly - 5.057981478584261) < 1e-6, "悲觀 avgMonthly=" + avgMonthly);
+  assert.ok(Math.abs(rows[9].net - 1146.5106590845937) < 1e-6, "悲觀 net10=" + rows[9].net);
+  assert.ok(Math.abs(avgMonthly - 5.051559942584262) < 1e-6, "悲觀 avgMonthly=" + avgMonthly);
 });
 
 test("golden regression: 樂觀 yr10 net and avg monthly living", function () {
   var rows = runScenario("樂觀");
   var avgMonthly = rows.reduce(function (a, x) { return a + x.living; }, 0) / 10 / 12;
-  assert.ok(Math.abs(rows[9].net - 3880.8308566049614) < 1e-6, "樂觀 net10=" + rows[9].net);
-  assert.ok(Math.abs(avgMonthly - 6.8867974697579335) < 1e-6, "樂觀 avgMonthly=" + avgMonthly);
+  assert.ok(Math.abs(rows[9].net - 3418.9863421632613) < 1e-6, "樂觀 net10=" + rows[9].net);
+  assert.ok(Math.abs(avgMonthly - 6.606477469757934) < 1e-6, "樂觀 avgMonthly=" + avgMonthly);
 });
 
 // ===== 提領設定獨立後的新測試 =====
@@ -608,7 +616,7 @@ test("2887 scenario % is total return incl. dividends: value growth = total retu
 test("2887 price growth is lower than total return by roughly the cash dividend yield; fixed mode keeps legacy full-return growth", function () {
   var target = runTarget("樂觀", { livingTarget: 0.001, years: 1 })[0];
   var fixed = runScenario("樂觀", { years: 1 })[0];
-  assert.ok(Math.abs(fixed.s2887 - 633 * 1.08) < 1e-9);
+  assert.ok(Math.abs(fixed.s2887 - M.DEF.holdings["2887"] * 1.08) < 1e-9);
   assert.ok(Math.abs((fixed.s2887 - target.s2887) - target.div2887) < 1e-9);
 });
 

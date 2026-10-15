@@ -12,9 +12,13 @@
   var FXk = 10000;
   var FACE_VALUE_2887 = 10; // 台股每股面額，配股換算股數的基準
 
+  // 預設值依 2026-10 公開資料校準（詳見 Reference/assumptions-check.md）：
+  // 2887 與 KO 的市值皆由「股數/金額 × 價格」推得，不再手填，避免市值與股數、股價互相矛盾。
   var DEF = {
-    holdings: { "0050": 300, "006208": 330, "2887": 633, "KO": 590, "SGOV": 330, "備用金": 180 },
-    fx: 32.4,
+    holdings: { "0050": 300, "006208": 330, "2887": 750.64, "KO": 256.56, "SGOV": 330, "備用金": 180 },
+    fx: 32.07,                // 央行 2026/10/14 銀行間收盤 32.073
+    price2887: 42.65,         // 2887 每股市價(元)：市值 = 原始股數 × 每股市價 ÷ 10000
+    // 注意：holdings 的 2887 / KO 為上述推導值（176000 × 42.65 ÷ 10000；80000 × 32.07 ÷ 10000）
     loanMonthly: 2.8999,
     livingTarget: 120,
     withdrawalRate: W.WITHDRAWAL_DEF.withdrawalRate,         // 0050 + 006208 提領%
@@ -30,10 +34,14 @@
     koUsdAmount: 80000,  // KO 總投入金額(美元)：用來自動換算股數/口數
     koPriceUsd: 91.05,   // KO 每股市價(美元)：股數 = 總投入金額 / 每股市價
     scen: {
-      "樂觀": { etf: 11, tw: 8, ko: 6, sgov: 3.8, callPricePerShare: 0.9 },
-      "中性": { etf: 7, tw: 3, ko: 2, sgov: 3.5, callPricePerShare: 0.6 }
+      "樂觀": { etf: 11, tw: 8, ko: 3, sgov: 3.65, callPricePerShare: 0.8 },
+      "中性": { etf: 7, tw: 3, ko: 2, sgov: 3.0, callPricePerShare: 0.6 }
     }
   };
+
+  // 2887 市值(萬) = 股數 × 每股市價(元) ÷ 10000；KO 市值(萬) = 美元金額 × 匯率 ÷ 10000。
+  function value2887(shares, priceTwd) { return (shares * priceTwd) / FXk; }
+  function valueKo(usdAmount, fx) { return (usdAmount * fx) / FXk; }
 
   function clampNumber(value, min, max) {
     var result = value;
@@ -236,6 +244,8 @@
   return {
     FXk: FXk,
     DEF: DEF,
+    value2887: value2887,
+    valueKo: valueKo,
     clampNumber: clampNumber,
     sanitizeNumber: sanitizeNumber,
     deepClone: deepClone,
