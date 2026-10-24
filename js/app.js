@@ -466,20 +466,22 @@
     var tabBar = document.getElementById("tabBar");
     var buttons = Array.prototype.slice.call(tabBar.querySelectorAll(".tab-bar__item"));
     var panels = Array.prototype.slice.call(document.querySelectorAll(".tab-panel"));
-    buttons.forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var target = btn.getAttribute("data-tab");
-        buttons.forEach(function (b) {
-          var active = b === btn;
-          b.classList.toggle("is-active", active);
-          b.setAttribute("aria-selected", active ? "true" : "false");
-        });
-        panels.forEach(function (p) {
-          p.classList.toggle("is-active", p.getAttribute("data-tab") === target);
-        });
+    function activate(target) {
+      buttons.forEach(function (b) {
+        var active = b.getAttribute("data-tab") === target;
+        b.classList.toggle("is-active", active);
+        b.setAttribute("aria-selected", active ? "true" : "false");
       });
+      panels.forEach(function (p) {
+        p.classList.toggle("is-active", p.getAttribute("data-tab") === target);
+      });
+    }
+    switchTab = activate;
+    buttons.forEach(function (btn) {
+      btn.addEventListener("click", function () { activate(btn.getAttribute("data-tab")); });
     });
   }
+  var switchTab = function () {};
 
   // ===== Number count-up animation =====
   function animateNumber(el, from, to, duration, decimals) {
@@ -660,18 +662,18 @@
       p1.textContent = "各投資池對應現金流（萬/年）";
       block.appendChild(p1);
 
-      var tot = { shortfall: 0, etfWd: 0, wd2887: 0, div2887: 0, call: 0, resInt: 0, usedRes: 0, living: 0, loanPay: 0 };
-      var rowsHtml = "<tr><th>年</th><th>月生活費<br>目標</th><th>目標<br>提領率</th><th>0050+006208<br>提領</th><th>2887<br>提領</th><th>2887<br>現金股利</th><th>KO<br>Covered Call</th><th>備用金<br>利息</th><th>備用金<br>補缺口</th><th>生活費<br>合計</th><th>未達標<br>缺口</th><th>SGOV→<br>還貸</th></tr>";
+      var tot = { shortfall: 0, etfWd: 0, wd2887: 0, div2887: 0, call: 0, resInt: 0, usedRes: 0, living: 0, loanPay: 0, koWd: 0 };
+      var rowsHtml = "<tr><th>年</th><th>月生活費<br>目標</th><th>目標<br>提領率</th><th>0050+006208<br>提領</th><th>2887<br>提領</th><th>KO<br>提領</th><th>2887<br>現金股利</th><th>KO<br>Covered Call</th><th>備用金<br>利息</th><th>備用金<br>補缺口</th><th>生活費<br>合計</th><th>未達標<br>缺口</th><th>SGOV→<br>還貸</th></tr>";
       rows.forEach(function (x) {
         var rc = x.etfRet < 0 ? ' class="neg"' : '';
         var uc = x.usedRes > 0 ? ' class="neg"' : '';
-        rowsHtml += "<tr><td" + rc + ">" + x.yr + "</td><td>" + (x.target / 12).toFixed(2) + "</td><td" + (x.wr >= 1 ? ' class="neg"' : '') + "><strong>" + (x.wr * 100).toFixed(2) + "%</strong></td><td>" + x.etfWd.toFixed(1) + "</td><td>" + x.wd2887.toFixed(1) + "</td><td>" + x.div2887.toFixed(1) + "</td>" +
+        rowsHtml += "<tr><td" + rc + ">" + x.yr + "</td><td>" + (x.target / 12).toFixed(2) + "</td><td" + (x.wr >= 1 ? ' class="neg"' : '') + "><strong>" + (x.wr * 100).toFixed(2) + "%</strong></td><td>" + x.etfWd.toFixed(1) + "</td><td>" + x.wd2887.toFixed(1) + "</td><td>" + x.koWd.toFixed(1) + "</td><td>" + x.div2887.toFixed(1) + "</td>" +
           "<td>" + x.call.toFixed(1) + "</td><td>" + x.resInt.toFixed(1) + "</td><td" + uc + ">" + x.usedRes.toFixed(1) + "</td>" +
           "<td><strong>" + x.living.toFixed(1) + "</strong></td><td" + (x.shortfall > 0.05 ? ' class="neg"' : '') + ">" + x.shortfall.toFixed(1) + "</td><td>" + x.loanPay.toFixed(1) + "</td></tr>";
-        tot.etfWd += x.etfWd; tot.wd2887 += x.wd2887; tot.div2887 += x.div2887; tot.call += x.call; tot.resInt += x.resInt;
+        tot.etfWd += x.etfWd; tot.wd2887 += x.wd2887; tot.koWd += x.koWd; tot.div2887 += x.div2887; tot.call += x.call; tot.resInt += x.resInt;
         tot.usedRes += x.usedRes; tot.shortfall += x.shortfall; tot.living += x.living; tot.loanPay += x.loanPay;
       });
-      rowsHtml += "<tr><th>" + rows.length + "年合計</th><th>—</th><th>—</th><th>" + tot.etfWd.toFixed(0) + "</th><th>" + tot.wd2887.toFixed(0) + "</th><th>" + tot.div2887.toFixed(0) + "</th>" +
+      rowsHtml += "<tr><th>" + rows.length + "年合計</th><th>—</th><th>—</th><th>" + tot.etfWd.toFixed(0) + "</th><th>" + tot.wd2887.toFixed(0) + "</th><th>" + tot.koWd.toFixed(0) + "</th><th>" + tot.div2887.toFixed(0) + "</th>" +
         "<th>" + tot.call.toFixed(0) + "</th><th>" + tot.resInt.toFixed(0) + "</th><th>" + tot.usedRes.toFixed(0) + "</th>" +
         "<th>" + tot.living.toFixed(0) + "</th><th>" + tot.shortfall.toFixed(0) + "</th><th>" + tot.loanPay.toFixed(0) + "</th></tr>";
 
@@ -795,6 +797,8 @@
       if (recalcTimer) clearTimeout(recalcTimer);
       saveState();
       calc();
+      switchTab("results");
+      window.scrollTo(0, 0);
     });
     document.getElementById("btn-reset").addEventListener("click", resetDefaults);
   }

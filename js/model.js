@@ -196,11 +196,20 @@
       if (mode === "fixed") {
         rates = { etf: withdrawalRate / 100, s2887: withdrawalRate2887 / 100, ko: withdrawalRateKo / 100 };
       } else {
-        var r = W.solveTargetRate(function (x) {
-          return simulate({ etf: x, s2887: x, ko: 0 }).living;
-        }, yearTarget);
-        // 0050+006208 與 2887 統一套用同一個目標提領率；KO 不提領（留倉成長、只貢獻 covered call 收入）。
-        rates = { etf: r, s2887: r, ko: 0 };
+        // 提領順序（瀑布）：0050+006208 → 備用金 → 2887 → KO
+        var lv = function (re_, r2_, rk_) { return simulate({ etf: re_, s2887: r2_, ko: rk_ }).living; };
+        var re = W.solveTargetRate(function (x) { return lv(x, 0, 0); }, yearTarget);
+        var r2 = 0, rk = 0;
+        if (lv(re, 0, 0) < yearTarget - 1e-9) {
+          // 0050+006208 已領到上限仍不足：先用備用金，再 2887，最後 KO
+          var resPlan = Math.min(Math.max(0, yearTarget - lv(1, 0, 0)), v["備用金"]);
+          var target2 = yearTarget - resPlan;
+          r2 = W.solveTargetRate(function (x) { return lv(1, x, 0); }, target2);
+          if (lv(1, r2, 0) < target2 - 1e-9) {
+            rk = W.solveTargetRate(function (x) { return lv(1, 1, x); }, target2);
+          }
+        }
+        rates = { etf: re, s2887: r2, ko: rk };
       }
       var sim = simulate(rates);
       var wr = rates.etf;
@@ -230,7 +239,7 @@
       var net = assets - (loanTotal - loanPaid);
 
       rows.push({
-        yr: yr, etfRet: etfRet, wr: wr, living: living, target: yearTarget,
+        yr: yr, etfRet: etfRet, wr: wr, wr2887: rates.s2887, wrKo: rates.ko, living: living, target: yearTarget,
         etf: v["0050"] + v["006208"], ko: v["KO"], s2887: v["2887"],
         sgov: v["SGOV"], res: v["備用金"], assets: assets, net: net,
         call: callInc, etfWd: etfWd, div2887: div2887, resInt: resInt, resRate: resRate,

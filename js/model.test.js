@@ -517,19 +517,39 @@ test("target mode: every year living meets the target (no overshoot) unless the 
   });
 });
 
-test("target mode: same rate applies to 0050+006208 and 2887; KO never withdraws", function () {
+test("target mode waterfall: 0050+006208 first; 備用金 -> 2887 -> KO only after the earlier pool is exhausted", function () {
   var rows = runTarget("中性");
   var r = rows[0];
   assert.ok(r.wr > 0 && r.wr < 1);
   assert.ok(Math.abs(r.etfWd - 630 * r.wr) < 1e-9);
-  assert.ok(Math.abs(r.wd2887 - M.DEF.holdings["2887"] * r.wr) < 1e-9);
-  assert.ok(r.wd2887 > 0);
+  assert.strictEqual(r.wd2887, 0);
+  assert.strictEqual(r.koWd, 0);
+  assert.strictEqual(r.usedRes, 0);
+  var seen2887 = false, seenKo = false;
   rows.forEach(function (x) {
-    assert.strictEqual(x.koWd, 0, "yr" + x.yr);
-    assert.strictEqual(x.koContracts, rows[0].koContracts, "KO contracts stay constant, yr" + x.yr);
+    if (x.wd2887 > 0) {
+      seen2887 = true;
+      assert.ok(x.wr >= 1 - 1e-9, "2887 only after ETF capped, yr" + x.yr);
+    }
+    if (x.koWd > 0) {
+      seenKo = true;
+      assert.ok(x.wr2887 >= 1 - 1e-9, "KO only after 2887 fully withdrawn, yr" + x.yr);
+    }
+    if (x.wd2887 > 0) assert.ok(x.usedRes > 0 || x.res === 0, "reserve before 2887, yr" + x.yr);
+    if (x.shortfall > 1e-6) {
+      assert.ok(x.res < 1e-9, "shortfall only when reserve empty, yr" + x.yr);
+    }
   });
-  // KO 不提領：yr1 市值 = 起始 × (1 + ko%)
-  assert.ok(Math.abs(rows[0].ko - M.DEF.holdings["KO"] * 1.02) < 1e-9);
+  assert.ok(seen2887, "2887 eventually withdrawn in a 30-year neutral run");
+});
+
+test("waterfall: with a huge target, reserve is used, then 2887, then KO, in the same year", function () {
+  var rows = runTarget("中性", { livingTarget: 2000, years: 3 });
+  var r = rows[0];
+  assert.ok(r.wr >= 1 - 1e-9);
+  assert.ok(r.usedRes > 0);
+  assert.ok(r.wd2887 > 0);
+  assert.ok(r.koWd > 0);
 });
 
 test("target mode: higher inflation requires higher or equal withdrawal rates in later years", function () {
