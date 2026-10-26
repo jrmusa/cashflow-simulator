@@ -196,20 +196,30 @@
       if (mode === "fixed") {
         rates = { etf: withdrawalRate / 100, s2887: withdrawalRate2887 / 100, ko: withdrawalRateKo / 100 };
       } else {
-        // 提領順序（瀑布）：0050+006208 → 備用金 → 2887 → KO
-        var lv = function (re_, r2_, rk_) { return simulate({ etf: re_, s2887: r2_, ko: rk_ }).living; };
-        var re = W.solveTargetRate(function (x) { return lv(x, 0, 0); }, yearTarget);
-        var r2 = 0, rk = 0;
-        if (lv(re, 0, 0) < yearTarget - 1e-9) {
-          // 0050+006208 已領到上限仍不足：先用備用金，再 2887，最後 KO
-          var resPlan = Math.min(Math.max(0, yearTarget - lv(1, 0, 0)), v["備用金"]);
-          var target2 = yearTarget - resPlan;
-          r2 = W.solveTargetRate(function (x) { return lv(1, x, 0); }, target2);
-          if (lv(1, r2, 0) < target2 - 1e-9) {
-            rk = W.solveTargetRate(function (x) { return lv(1, 1, x); }, target2);
+        // 提領順序（瀑布）：預設 2887 → 0050+006208 → KO → 備用金（最後手段）；params.order 可自訂（"res" 代表備用金），
+        // params.order === "prorata" 則 0050+006208/2887/KO 三池套用同一提領率（備用金補缺口）。
+        var lv = function (rt) { return simulate(rt).living; };
+        var order = params.order || ["2887", "etf", "ko", "res"];
+        rates = { etf: 0, s2887: 0, ko: 0 };
+        var resPlan = 0;
+        if (order === "prorata") {
+          var rp = W.solveTargetRate(function (x) { return lv({ etf: x, s2887: x, ko: x }); }, yearTarget);
+          rates = { etf: rp, s2887: rp, ko: rp };
+        } else {
+          for (var oi = 0; oi < order.length; oi++) {
+            var pool = order[oi];
+            var tgt = yearTarget - resPlan;
+            if (lv(rates) >= tgt - 1e-9) break;
+            if (pool === "res") {
+              resPlan += Math.min(tgt - lv(rates), v["備用金"]);
+            } else {
+              var key = pool === "2887" ? "s2887" : pool;
+              rates[key] = W.solveTargetRate(function (x) {
+                var t = Object.assign({}, rates); t[key] = x; return lv(t);
+              }, tgt);
+            }
           }
         }
-        rates = { etf: re, s2887: r2, ko: rk };
       }
       var sim = simulate(rates);
       var wr = rates.etf;

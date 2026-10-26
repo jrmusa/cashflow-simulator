@@ -85,12 +85,12 @@
 
   <section class="tab-panel" id="panel-withdrawal" data-tab="withdrawal">
     <h2 class="section-title">提領設定</h2>
-    <p class="small">提領順序：先提領 <strong>0050+006208</strong> 湊足當年生活費；一旦 0050+006208 領光仍不足，依序動用 <strong>備用金 → 2887 → KO</strong>。提領率不再手動設定，而是由每年的「月生活費目標」反推出<strong>目標提領率</strong>（已扣除 2887 現金股利、KO covered call、備用金利息），顯示在「結果」頁表格。每月月初先提領、剩餘部位才賺當月報酬。</p>
+    <p class="small">提領順序：依「報酬由低到高」的順序提領：先賣 <strong>2887</strong>，領光仍不足再賣 <strong>0050+006208</strong>，再來是 <strong>KO</strong>（含 covered call 收入，報酬最高），<strong>備用金</strong>是最後手段。提領率不再手動設定，而是由每年的「月生活費目標」反推出<strong>目標提領率</strong>（已扣除 2887 現金股利、KO covered call、備用金利息），顯示在「結果」頁表格。每月月初先提領、剩餘部位才賺當月報酬。</p>
 
     <div class="grouped-card">
       <div class="subsection-header">
         <h3>生活費目標與通膨</h3>
-        <p class="small">第 1 年生活費 = 月生活費目標 × 12，之後每年乘上 (1 + 通膨率)。若不提領就已達標，目標提領率為 0%；0050+006208 提領到 100% 仍不足時，依序由備用金、2887（賣出股數，現金股利與配股隨之減少）、KO（賣出後口數縮減，covered call 收入同步下降）補足；全部用完仍不足才會出現「未達標缺口」。</p>
+        <p class="small">第 1 年生活費 = 月生活費目標 × 12，之後每年乘上 (1 + 通膨率)。若不提領就已達標，目標提領率為 0%；2887 提領到 100% 仍不足時，依序由 0050+006208、KO（賣出後口數縮減，covered call 收入同步下降）補足，最後才動用備用金；全部用完仍不足才會出現「未達標缺口」。</p>
       </div>
       <div class="field-grid" id="withdrawalInputs"></div>
     </div>

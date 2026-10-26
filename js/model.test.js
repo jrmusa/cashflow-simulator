@@ -31,6 +31,7 @@ function runScenario(name, overrides) {
     withdrawalRate: state.withdrawalRate !== undefined ? state.withdrawalRate : DEF.withdrawalRate,
     // 既有測試與 golden 值皆為「僅 ETF 提領、10 年」的舊行為，預設把 2887/KO 提領設為 0、年數設為 10；
     // 新行為由下方獨立測試以 overrides 明確開啟。
+    order: state.order,
     withdrawalMode: state.withdrawalMode || "fixed",
     inflation: state.inflation !== undefined ? state.inflation : 0,
     withdrawalRate2887: state.withdrawalRate2887 !== undefined ? state.withdrawalRate2887 : 0,
@@ -517,30 +518,22 @@ test("target mode: every year living meets the target (no overshoot) unless the 
   });
 });
 
-test("target mode waterfall: 0050+006208 first; 備用金 -> 2887 -> KO only after the earlier pool is exhausted", function () {
+test("target mode waterfall: 2887 first, then 0050+006208, then KO, 備用金 last", function () {
   var rows = runTarget("中性");
   var r = rows[0];
-  assert.ok(r.wr > 0 && r.wr < 1);
-  assert.ok(Math.abs(r.etfWd - 630 * r.wr) < 1e-9);
-  assert.strictEqual(r.wd2887, 0);
+  assert.ok(r.wr2887 > 0 && r.wr2887 < 1);
+  assert.ok(Math.abs(r.wd2887 - M.DEF.holdings["2887"] * r.wr2887) < 1e-9);
+  assert.strictEqual(r.etfWd, 0);
   assert.strictEqual(r.koWd, 0);
   assert.strictEqual(r.usedRes, 0);
-  var seen2887 = false, seenKo = false;
+  var seenEtf = false, seenKo = false;
   rows.forEach(function (x) {
-    if (x.wd2887 > 0) {
-      seen2887 = true;
-      assert.ok(x.wr >= 1 - 1e-9, "2887 only after ETF capped, yr" + x.yr);
-    }
-    if (x.koWd > 0) {
-      seenKo = true;
-      assert.ok(x.wr2887 >= 1 - 1e-9, "KO only after 2887 fully withdrawn, yr" + x.yr);
-    }
-    if (x.wd2887 > 0) assert.ok(x.usedRes > 0 || x.res === 0, "reserve before 2887, yr" + x.yr);
-    if (x.shortfall > 1e-6) {
-      assert.ok(x.res < 1e-9, "shortfall only when reserve empty, yr" + x.yr);
-    }
+    if (x.etfWd > 0) { seenEtf = true; assert.ok(x.wr2887 >= 1 - 1e-9, "ETF only after 2887 fully withdrawn, yr" + x.yr); }
+    if (x.koWd > 0) { seenKo = true; assert.ok(x.wr >= 1 - 1e-9, "KO only after ETF capped, yr" + x.yr); }
+    if (x.usedRes > 1e-9) assert.ok(x.wr >= 1 - 1e-9 && x.wrKo >= 1 - 1e-9, "reserve only after all pools, yr" + x.yr);
+    if (x.shortfall > 1e-6) assert.ok(x.res < 1e-9, "shortfall only when reserve empty, yr" + x.yr);
   });
-  assert.ok(seen2887, "2887 eventually withdrawn in a 30-year neutral run");
+  assert.ok(seenEtf);
 });
 
 test("waterfall: with a huge target, reserve is used, then 2887, then KO, in the same year", function () {
@@ -555,7 +548,8 @@ test("waterfall: with a huge target, reserve is used, then 2887, then KO, in the
 test("target mode: higher inflation requires higher or equal withdrawal rates in later years", function () {
   var a = runTarget("中性", { inflation: 0 });
   var b = runTarget("中性", { inflation: 4 });
-  assert.ok(b[4].wr > a[4].wr); // 第 5 年：兩者都尚未碰到 100% 上限
+  var tw = function (x) { return x.etfWd + x.wd2887 + x.koWd; };
+  assert.ok(tw(b[4]) > tw(a[4])); // 第 5 年：通膨較高 → 提領金額較大
   // 淨值比較取兩者資金都尚未耗盡的第 15 年（後期兩者的提領池都可能被領光，淨值趨近而失去比較意義）
   assert.ok(b[14].net < a[14].net);
 });
@@ -642,3 +636,13 @@ test("2887 price growth is lower than total return by roughly the cash dividend 
 
 console.log("\n" + passed + " passed, " + failed + " failed");
 process.exitCode = failed > 0 ? 1 : 0;
+
+test("order param: default equals explicit [2887,etf,ko,res]; reserve-first spends the reserve in year 1; prorata applies one rate to all pools", function () {
+  var a = runTarget("中性", { livingTarget: 100 });
+  var b = runTarget("中性", { livingTarget: 100, order: ["2887", "etf", "ko", "res"] });
+  assert.strictEqual(a[29].net, b[29].net);
+  var c = runTarget("中性", { livingTarget: 100, order: ["res", "etf", "2887", "ko"], years: 3 });
+  assert.ok(c[0].usedRes > 0);
+  var d = runTarget("中性", { livingTarget: 100, order: "prorata", years: 3 });
+  assert.ok(Math.abs(d[0].wr - d[0].wr2887) < 1e-12 && Math.abs(d[0].wr - d[0].wrKo) < 1e-12);
+});
