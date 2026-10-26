@@ -126,8 +126,11 @@
     var mode = params.withdrawalMode || "target";
 
     var rows = [];
+    var prevRet = null;
     for (var yr = 1; yr <= years; yr++) {
-      var etfRet = s.etf / 100;
+      // 隨機路徑（蒙地卡羅）：params.pathReturns[yr-1] 可覆寫當年 etf/tw/ko 報酬%，未提供則用情境固定值。
+      var ys = params.pathReturns && params.pathReturns[yr - 1] ? Object.assign({}, s, params.pathReturns[yr - 1]) : s;
+      var etfRet = ys.etf / 100;
       if (crash[yr] !== undefined) etfRet = crash[yr];
       // 該年度生活費目標（年，萬）：第 1 年為設定值，之後每年乘上 (1 + 通膨率)。
       var yearTarget = livingTarget * Math.pow(1 + inflation / 100, yr - 1);
@@ -159,7 +162,7 @@
         });
 
         // 2887 提領：賣出的股數同步從總股數扣除（取整數），之後的現金股利與配股都以提領後的股數計算。
-        var r2887 = W.applyWithdrawal(v["2887"], s.tw / 100, rates.s2887);
+        var r2887 = W.applyWithdrawal(v["2887"], ys.tw / 100, rates.s2887);
         var sh = shares2887;
         if (rates.s2887 > 0) sh = Math.floor(sh * r2887.ratio);
         // 配息與配股都以「當年最新總股數」（原始股數＋歷年累積配股）計算，會逐年成長。
@@ -176,10 +179,10 @@
         var s2887End = mode === "fixed" ? r2887.end : Math.max(0, r2887.end - div);
 
         // KO 提領：賣出的股數同步縮減，口數 = 剩餘股數 ÷ 100 無條件捨去，covered call 收入隨之減少。
-        var rKo = W.applyWithdrawal(v["KO"], s.ko / 100, rates.ko);
+        var rKo = W.applyWithdrawal(v["KO"], ys.ko / 100, rates.ko);
         var ks = koShares;
         if (rates.ko > 0) ks = ks * rKo.ratio;
-        var contracts = rates.ko > 0 ? Math.floor(ks / 100) : koPos.contracts;
+        var contracts = Math.floor(ks / 100); // 以目前剩餘股數計（前幾年賣過 KO 的話口數不會回復）
         var call = (contracts * 100 * s.callPricePerShare * 12 * fx) / FXk;
         var koEnd = rKo.end;
         if (crash[yr] !== undefined) koEnd *= 1 + crash[yr] * 0.6;
@@ -200,23 +203,45 @@
         // params.order === "prorata" 則 0050+006208/2887/KO 三池套用同一提領率（備用金補缺口）。
         var lv = function (rt) { return simulate(rt).living; };
         var order = params.order || ["2887", "etf", "ko", "res"];
+        // order 也可以是函式：每年依當下狀態（市值、上一年報酬）動態決定順序。
+        if (typeof order === "function") order = order({ yr: yr, v: Object.assign({}, v), init: holdings, prev: prevRet, target: yearTarget });
         rates = { etf: 0, s2887: 0, ko: 0 };
         var resPlan = 0;
         if (order === "prorata") {
           var rp = W.solveTargetRate(function (x) { return lv({ etf: x, s2887: x, ko: x }); }, yearTarget);
           rates = { etf: rp, s2887: rp, ko: rp };
         } else {
-          for (var oi = 0; oi < order.length; oi++) {
-            var pool = order[oi];
+          // 動態上限（params.capMult，例 1 = 每池每年最多領「該池年報酬」）：先在上限內由報酬低的池依序提領，
+          // 各池都到上限仍不足，才進入第二輪（不設上限）依序補足；備用金永遠最後。
+          var pools = order.filter(function (x) { return x !== "res"; });
+          var tail = order.indexOf("res") >= 0 ? ["res"] : [];
+          var steps = [];
+          if (typeof params.capMult === "number") {
+            var callY = s.callPricePerShare * 12 / params.koPriceUsd;
+            var capOf = { s2887: s.tw / 100, etf: s.etf / 100, ko: s.ko / 100 + callY };
+            pools.forEach(function (pl) {
+              var k = pl === "2887" ? "s2887" : pl;
+              steps.push({ pool: pl, cap: Math.max(0, capOf[k] * params.capMult) });
+            });
+          }
+          if (typeof params.capMult === "number") {
+            pools.forEach(function (pl) { steps.push({ pool: pl, cap: 1 }); });
+            tail.forEach(function (pl) { steps.push({ pool: pl, cap: 1 }); });
+          } else {
+            order.forEach(function (pl) { steps.push({ pool: pl, cap: 1 }); });
+          }
+          for (var oi = 0; oi < steps.length; oi++) {
+            var pool = steps[oi].pool, cap = steps[oi].cap;
             var tgt = yearTarget - resPlan;
             if (lv(rates) >= tgt - 1e-9) break;
             if (pool === "res") {
               resPlan += Math.min(tgt - lv(rates), v["備用金"]);
             } else {
               var key = pool === "2887" ? "s2887" : pool;
-              rates[key] = W.solveTargetRate(function (x) {
+              var solved = W.solveTargetRate(function (x) {
                 var t = Object.assign({}, rates); t[key] = x; return lv(t);
               }, tgt);
+              rates[key] = Math.max(rates[key], Math.min(solved, cap));
             }
           }
         }
@@ -248,6 +273,7 @@
       var assets = Object.values(v).reduce(function (a, b) { return a + b; }, 0);
       var net = assets - (loanTotal - loanPaid);
 
+      prevRet = { etf: ys.etf, tw: ys.tw, ko: ys.ko };
       rows.push({
         yr: yr, etfRet: etfRet, wr: wr, wr2887: rates.s2887, wrKo: rates.ko, living: living, target: yearTarget,
         etf: v["0050"] + v["006208"], ko: v["KO"], s2887: v["2887"],

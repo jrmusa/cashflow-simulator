@@ -32,6 +32,8 @@ function runScenario(name, overrides) {
     // 既有測試與 golden 值皆為「僅 ETF 提領、10 年」的舊行為，預設把 2887/KO 提領設為 0、年數設為 10；
     // 新行為由下方獨立測試以 overrides 明確開啟。
     order: state.order,
+    capMult: state.capMult,
+    pathReturns: state.pathReturns,
     withdrawalMode: state.withdrawalMode || "fixed",
     inflation: state.inflation !== undefined ? state.inflation : 0,
     withdrawalRate2887: state.withdrawalRate2887 !== undefined ? state.withdrawalRate2887 : 0,
@@ -634,8 +636,6 @@ test("2887 price growth is lower than total return by roughly the cash dividend 
   assert.ok(Math.abs((fixed.s2887 - target.s2887) - target.div2887) < 1e-9);
 });
 
-console.log("\n" + passed + " passed, " + failed + " failed");
-process.exitCode = failed > 0 ? 1 : 0;
 
 test("order param: default equals explicit [2887,etf,ko,res]; reserve-first spends the reserve in year 1; prorata applies one rate to all pools", function () {
   var a = runTarget("中性", { livingTarget: 100 });
@@ -646,3 +646,23 @@ test("order param: default equals explicit [2887,etf,ko,res]; reserve-first spen
   var d = runTarget("中性", { livingTarget: 100, order: "prorata", years: 3 });
   assert.ok(Math.abs(d[0].wr - d[0].wr2887) < 1e-12 && Math.abs(d[0].wr - d[0].wrKo) < 1e-12);
 });
+
+test("capMult: per-pool withdrawal rate stays within cap x pool return while earlier steps suffice; default (no capMult) unchanged", function () {
+  var base = runTarget("中性", { livingTarget: 60, years: 3 });
+  var capped = runTarget("中性", { livingTarget: 60, years: 3, capMult: 1 });
+  assert.ok(capped[0].wr2887 <= 0.03 + 1e-9, "2887 rate <= its 3% return");
+  assert.ok(base[0].wr2887 > capped[0].wr2887 - 1e-12);
+  var none = runTarget("中性", { livingTarget: 60, years: 3, capMult: undefined });
+  assert.strictEqual(none[2].net, base[2].net);
+});
+
+test("pathReturns: constant path equal to the scenario reproduces the deterministic run; order may be a function", function () {
+  var sc = M.DEF.scen["中性"];
+  var p = []; for (var i = 0; i < 30; i++) p.push({ etf: sc.etf, tw: sc.tw, ko: sc.ko });
+  var a = runTarget("中性");
+  var b = runTarget("中性", { pathReturns: p, order: function () { return ["2887", "etf", "ko", "res"]; } });
+  assert.strictEqual(a[29].net, b[29].net);
+});
+
+console.log("\n" + passed + " passed, " + failed + " failed");
+process.exitCode = failed > 0 ? 1 : 0;
