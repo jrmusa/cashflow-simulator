@@ -33,6 +33,8 @@
     stockDividendPerShare2887: 0.1,
     koUsdAmount: 80000,  // KO 總投入金額(美元)：用來自動換算股數/口數
     koPriceUsd: 91.05,   // KO 每股市價(美元)：股數 = 總投入金額 / 每股市價
+    bearDrawdown: 20,    // 熊市門檻：ETF 距高點跌 ≥ 此%，當年備用金優先提領（0 = 關閉）；回到高點後從 ETF 補回
+    koCapHist: 8,        // 歷史推演：KO 每年淨漲上限%（covered call 被履約，賺不到大漲；8% 時 2004–2025 年化約 1.5%，接近中性 2%）
     scen: {
       "樂觀": { etf: 11, tw: 8, ko: 3, sgov: 3.65, callPricePerShare: 0.8 },
       "中性": { etf: 7, tw: 3, ko: 2, sgov: 3.0, callPricePerShare: 0.6 }
@@ -127,6 +129,14 @@
 
     var rows = [];
     var prevRet = null;
+
+    // 熊市提領規則（params.bearRule = {drawdown: 20, refill: true}，僅 target 模式）：
+    // 以 ETF（0050+006208）的「報酬指數」（不受提領影響）判斷，年初若距歷史高點已跌 ≥ drawdown%，
+    // 當年提領改為「備用金優先」，備用金用完才照原順序賣股；之後 ETF 指數回到高點（創新高）的那年年初，
+    // 從 0050+006208 賣出把熊市期間用掉的備用金補回（不超過原始備用金）。
+    var bearCfg = mode !== "fixed" && params.bearRule && params.bearRule.drawdown > 0 ? params.bearRule : null;
+    var etfIdx = 1, etfPeak = 1, bearUsed = 0;
+    var initRes = holdings["備用金"];
     for (var yr = 1; yr <= years; yr++) {
       // 隨機路徑（蒙地卡羅）：params.pathReturns[yr-1] 可覆寫當年 etf/tw/ko 報酬%，未提供則用情境固定值。
       var ys = params.pathReturns && params.pathReturns[yr - 1] ? Object.assign({}, s, params.pathReturns[yr - 1]) : s;
@@ -134,6 +144,21 @@
       if (crash[yr] !== undefined) etfRet = crash[yr];
       // 該年度生活費目標（年，萬）：第 1 年為設定值，之後每年乘上 (1 + 通膨率)。
       var yearTarget = livingTarget * Math.pow(1 + inflation / 100, yr - 1);
+
+      var drawdown = 1 - etfIdx / etfPeak; // 年初已知：ETF 指數距高點的跌幅
+      var bear = !!bearCfg && drawdown >= bearCfg.drawdown / 100 - 1e-12;
+      var refill = 0;
+      if (bearCfg && bearCfg.refill && !bear && bearUsed > 0 && etfIdx >= etfPeak - 1e-12) {
+        var etfTot = v["0050"] + v["006208"];
+        refill = Math.max(0, Math.min(bearUsed, initRes - v["備用金"], etfTot));
+        if (refill > 0) {
+          var keep = 1 - refill / etfTot;
+          v["0050"] *= keep;
+          v["006208"] *= keep;
+          v["備用金"] += refill;
+        }
+        bearUsed = 0;
+      }
 
       // 先處理與提領無關的 SGOV 還貸與備用金利息（不受提領率影響）。
       var sgovInt = v["SGOV"] * (s.sgov / 100);
@@ -205,6 +230,8 @@
         var order = params.order || ["2887", "etf", "ko", "res"];
         // order 也可以是函式：每年依當下狀態（市值、上一年報酬）動態決定順序。
         if (typeof order === "function") order = order({ yr: yr, v: Object.assign({}, v), init: holdings, prev: prevRet, target: yearTarget });
+        // 熊市年：備用金移到最前面優先動用，其餘池維持原順序。
+        if (bear && Array.isArray(order)) order = ["res"].concat(order.filter(function (x) { return x !== "res"; }));
         rates = { etf: 0, s2887: 0, ko: 0 };
         var resPlan = 0;
         if (order === "prorata") {
@@ -270,16 +297,20 @@
         living += usedRes;
       }
 
+      if (bear) bearUsed += usedRes;
+      etfIdx *= 1 + etfRet;
+      if (etfIdx > etfPeak) etfPeak = etfIdx;
+
       var assets = Object.values(v).reduce(function (a, b) { return a + b; }, 0);
       var net = assets - (loanTotal - loanPaid);
 
       prevRet = { etf: ys.etf, tw: ys.tw, ko: ys.ko };
       rows.push({
-        yr: yr, etfRet: etfRet, wr: wr, wr2887: rates.s2887, wrKo: rates.ko, living: living, target: yearTarget,
+        yr: yr, etfRet: etfRet, twRet: ys.tw / 100, koRet: ys.ko / 100, histYear: ys.year, wr: wr, wr2887: rates.s2887, wrKo: rates.ko, living: living, target: yearTarget,
         etf: v["0050"] + v["006208"], ko: v["KO"], s2887: v["2887"],
         sgov: v["SGOV"], res: v["備用金"], assets: assets, net: net,
         call: callInc, etfWd: etfWd, div2887: div2887, resInt: resInt, resRate: resRate,
-        usedRes: usedRes, shortfall: Math.max(0, yearTarget - living), loanPay: loanPayYr, wd2887: wd2887, koWd: koWd, shares2887Total: shares2887Total,
+        usedRes: usedRes, bear: bear, drawdown: drawdown, refill: refill, shortfall: Math.max(0, yearTarget - living), loanPay: loanPayYr, wd2887: wd2887, koWd: koWd, shares2887Total: shares2887Total,
         koShares: koShares, koContracts: koContracts
       });
     }

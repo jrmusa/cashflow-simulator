@@ -412,6 +412,9 @@ tr:last-child td { border-bottom: none; }
   gap: var(--space-3);
   margin: var(--space-2) 0 var(--space-4);
 }
+@media (min-width: 641px) {
+  .cards { grid-template-columns: repeat(3, 1fr); }
+}
 @media (max-width: 420px) {
   .cards { grid-template-columns: 1fr; }
 }
@@ -525,3 +528,236 @@ tr:last-child td { border-bottom: none; }
 
 /* ===== Utility ===== */
 .count-up { font-variant-numeric: tabular-nums; }
+
+/* ===== 歷史推演 ===== */
+.hist-card { padding: var(--space-4); }
+.hist-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.hist-card__text { flex: 1 1 220px; min-width: 0; }
+.hist-card__text h3 {
+  font-size: var(--fs-headline);
+  font-weight: 700;
+  color: var(--hist-color, #0A84FF);
+  margin-bottom: var(--space-1);
+}
+.hist-card__note { margin-top: var(--space-2); }
+.hist-shuffle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--ios-blue);
+  white-space: nowrap;
+}
+.hist-shuffle-btn__icon { display: inline-block; }
+.hist-shuffle-btn.is-rolling .hist-shuffle-btn__icon {
+  animation: dice-roll 600ms var(--anim-ease);
+}
+@keyframes dice-roll {
+  0% { transform: rotate(0) scale(1); }
+  40% { transform: rotate(200deg) scale(1.3); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+.hist-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  gap: 6px;
+  margin-top: var(--space-3);
+}
+.hist-chip {
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 6px 2px;
+  font-family: inherit;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  color: var(--ios-label);
+  background: var(--ios-fill-tertiary);
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.85);
+  animation: chip-in var(--anim-base) var(--anim-ease) forwards;
+}
+.hist-chip__idx { display: block; color: var(--ios-label-secondary); font-size: 0.6875rem; }
+.hist-chip__year { display: block; font-weight: 700; }
+.hist-chip__ret { display: block; font-size: 0.6875rem; }
+.hist-chip.is-up { background: rgba(52, 199, 89, 0.16); }
+.hist-chip.is-up .hist-chip__ret { color: var(--ios-green); }
+.hist-chip.is-down { background: rgba(255, 59, 48, 0.16); }
+.hist-chip.is-down .hist-chip__ret { color: var(--ios-red); }
+.hist-chip.is-selected { outline: 2px solid var(--ios-blue); outline-offset: 1px; }
+.hist-chip-detail {
+  margin-top: var(--space-2);
+  font-size: var(--fs-footnote);
+  color: var(--ios-label);
+  min-height: 1.4em;
+}
+@keyframes chip-in {
+  to { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hist-chip { animation: none; opacity: 1; transform: none; }
+  .hist-shuffle-btn.is-rolling .hist-shuffle-btn__icon { animation: none; }
+}
+
+/* ===== 結果頁：記錄按鈕 ===== */
+.results-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: var(--space-6) var(--space-1) 0;
+}
+.results-title-row .section-title { margin: 0; }
+.record-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-2) var(--space-4);
+  box-shadow: 0 4px 14px rgba(0, 122, 255, 0.28);
+}
+.record-hint { margin: var(--space-2) 0 var(--space-3); }
+
+/* ===== 資料庫分頁 ===== */
+.db-toolbar { padding: var(--space-3) var(--space-4) 0; }
+.db-toolbar .btn-row { padding-left: 0; padding-right: 0; }
+.db-status { margin: 0; }
+.btn-destructive { color: var(--ios-red); }
+.db-table th { white-space: nowrap; }
+.db-table th.db-group { text-align: left; color: var(--ios-label); }
+.db-table td { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.db-sticky {
+  position: sticky;
+  left: 0;
+  background: var(--ios-bg-elevated);
+  z-index: 1;
+}
+.db-row {
+  opacity: 0;
+  animation: db-row-in var(--anim-base) var(--anim-ease) forwards;
+}
+@keyframes db-row-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.db-empty {
+  background: var(--ios-bg-elevated);
+  border-radius: var(--radius-md);
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+  color: var(--ios-label-secondary);
+  margin-bottom: var(--space-4);
+}
+.db-empty__icon { font-size: 2.4rem; margin-bottom: var(--space-2); }
+.db-empty p { margin: 4px 0; }
+.db-chart-wrap { margin-top: var(--space-4); }
+
+/* ===== iOS 對話框（alert） ===== */
+.ios-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  z-index: 1000;
+  animation: dialog-fade var(--anim-base) var(--anim-ease);
+}
+.ios-dialog-overlay.is-closing { animation: dialog-fade-out 180ms var(--anim-ease) forwards; }
+.ios-dialog {
+  width: 100%;
+  max-width: 300px;
+  background: var(--ios-bg-elevated);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  animation: dialog-pop var(--anim-base) cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.ios-dialog__body { padding: var(--space-5) var(--space-4) var(--space-4); text-align: center; }
+.ios-dialog__title { font-size: var(--fs-headline); font-weight: 600; margin: 0 0 var(--space-1); color: var(--ios-label); }
+.ios-dialog__message { font-size: var(--fs-footnote); color: var(--ios-label); margin: 0; white-space: pre-line; line-height: 1.45; }
+.ios-dialog__input {
+  width: 100%;
+  margin-top: var(--space-3);
+  padding: 8px 10px;
+  border: 1px solid var(--ios-separator);
+  border-radius: var(--radius-sm);
+  background: var(--ios-bg);
+  color: var(--ios-label);
+  font-size: var(--fs-body);
+  font-family: inherit;
+  text-align: center;
+}
+.ios-dialog__input:focus { outline: 2px solid var(--ios-blue); outline-offset: 0; }
+.ios-dialog__list {
+  margin-top: var(--space-3);
+  max-height: 240px;
+  overflow-y: auto;
+  text-align: left;
+  border-radius: var(--radius-sm);
+  background: var(--ios-bg);
+}
+.ios-dialog__check {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 10px 12px;
+  font-size: var(--fs-subheadline);
+  color: var(--ios-label);
+  border-bottom: 1px solid var(--ios-separator);
+  cursor: pointer;
+}
+.ios-dialog__check:last-child { border-bottom: none; }
+.ios-dialog__check input { width: 20px; height: 20px; accent-color: var(--ios-red); }
+.ios-dialog__buttons { display: flex; border-top: 1px solid var(--ios-separator); }
+.ios-dialog__buttons.is-stacked { flex-direction: column; }
+.ios-dialog__btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 12px 8px;
+  font-size: var(--fs-body);
+  font-family: inherit;
+  color: var(--ios-blue);
+  cursor: pointer;
+}
+.ios-dialog__buttons:not(.is-stacked) .ios-dialog__btn + .ios-dialog__btn { border-left: 1px solid var(--ios-separator); }
+.ios-dialog__buttons.is-stacked .ios-dialog__btn + .ios-dialog__btn { border-top: 1px solid var(--ios-separator); }
+.ios-dialog__btn:active { background: var(--ios-fill-tertiary); }
+.ios-dialog__btn.is-primary { font-weight: 600; }
+.ios-dialog__btn.is-destructive { color: var(--ios-red); font-weight: 600; }
+@keyframes dialog-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dialog-fade-out { to { opacity: 0; } }
+@keyframes dialog-pop { from { opacity: 0; transform: scale(1.12); } to { opacity: 1; transform: scale(1); } }
+
+/* ===== 提示橫幅（toast） ===== */
+.ios-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom) + 14px);
+  transform: translate(-50%, 20px);
+  max-width: calc(100% - 32px);
+  background: rgba(30, 30, 30, 0.92);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-footnote);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--anim-base) var(--anim-ease), transform var(--anim-base) var(--anim-ease);
+  z-index: 1100;
+  text-align: center;
+}
+.ios-toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
+.ios-toast.is-error { background: rgba(255, 59, 48, 0.94); }
+@media (prefers-reduced-motion: reduce) {
+  .ios-dialog, .ios-dialog-overlay, .db-row { animation: none; opacity: 1; }
+}

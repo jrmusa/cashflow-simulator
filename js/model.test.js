@@ -34,6 +34,7 @@ function runScenario(name, overrides) {
     order: state.order,
     capMult: state.capMult,
     pathReturns: state.pathReturns,
+    bearRule: state.bearRule,
     withdrawalMode: state.withdrawalMode || "fixed",
     inflation: state.inflation !== undefined ? state.inflation : 0,
     withdrawalRate2887: state.withdrawalRate2887 !== undefined ? state.withdrawalRate2887 : 0,
@@ -662,6 +663,258 @@ test("pathReturns: constant path equal to the scenario reproduces the determinis
   var a = runTarget("中性");
   var b = runTarget("中性", { pathReturns: p, order: function () { return ["2887", "etf", "ko", "res"]; } });
   assert.strictEqual(a[29].net, b[29].net);
+});
+
+// ===== 歷史推演（真實歷史年報酬隨機重排，排除不合理路徑）=====
+var HI = require("./history.js");
+
+test("history: data covers 2004–2025 once each with etf/tw/ko numbers", function () {
+  assert.strictEqual(HI.HIST.length, 22);
+  HI.HIST.forEach(function (h, i) {
+    assert.strictEqual(h.year, 2004 + i);
+    HI.KEYS.forEach(function (k) { assert.ok(typeof h[k] === "number" && isFinite(h[k])); });
+  });
+  // 抽查已知年份：2008 金融海嘯三檔同跌、2009 大反彈
+  assert.ok(HI.HIST[4].etf < -40 && HI.HIST[4].tw < -50 && HI.HIST[4].ko < -20);
+  assert.ok(HI.HIST[5].etf > 70);
+});
+
+test("history: bounds are the worst/best rolling 10-year CAGR of the real sequence, and the real sequence itself is reasonable", function () {
+  HI.KEYS.forEach(function (k) {
+    var lo = Infinity, hi = -Infinity;
+    for (var i = 0; i + 10 <= 22; i++) {
+      var c = HI.cagr(HI.HIST.slice(i, i + 10).map(function (h) { return h[k]; }));
+      lo = Math.min(lo, c); hi = Math.max(hi, c);
+    }
+    assert.ok(Math.abs(HI.BOUNDS[k].min - lo) < 1e-12 && Math.abs(HI.BOUNDS[k].max - hi) < 1e-12);
+    assert.ok(HI.BOUNDS[k].min < HI.BOUNDS[k].max);
+  });
+  assert.ok(HI.isReasonable(HI.HIST));
+  assert.ok(Math.abs(HI.cagr([10, -10]) - (Math.sqrt(1.1 * 0.9) - 1) * 100) < 1e-12);
+});
+
+test("history: isReasonable rejects 4 straight down years and a 10-year run of the worst years", function () {
+  var down = HI.HIST.filter(function (h) { return h.etf < 0; }); // 2008, 2011, 2015, 2018, 2022
+  var good = HI.HIST.filter(function (h) { return h.etf >= 0; });
+  assert.ok(!HI.isReasonable(down.slice(0, 4)));
+  assert.ok(HI.isReasonable(down.slice(0, 3)));
+  // 10 年都抽到 ETF 最差的年份 → 10 年年化遠低於歷史最差 → 不合理
+  var sorted = HI.HIST.slice().sort(function (a, b) { return a.etf - b.etf; });
+  var worst = [sorted[0], sorted[5], sorted[1], sorted[6], sorted[2], sorted[7], sorted[3], sorted[8], sorted[4], sorted[9]];
+  assert.ok(!HI.isReasonable(worst));
+  assert.ok(good.length > 0);
+});
+
+test("history: generatePath is deterministic per seed, reasonable, uses each historical year once per 22-year cycle", function () {
+  [1, 2, 42, 123456, 4294967295].forEach(function (seed) {
+    [5, 10, 22, 30, 50].forEach(function (n) {
+      var p = HI.generatePath(n, seed);
+      assert.ok(p && p.length === n, "seed " + seed + " n " + n);
+      assert.ok(HI.isReasonable(p));
+      for (var c = 0; c < n; c += 22) {
+        var ys = p.slice(c, c + 22).map(function (h) { return h.year; });
+        assert.strictEqual(new Set(ys).size, ys.length, "no repeat within a cycle");
+      }
+    });
+  });
+  var a = HI.generatePath(30, 7).map(function (h) { return h.year; }).join();
+  var b = HI.generatePath(30, 7).map(function (h) { return h.year; }).join();
+  var c = HI.generatePath(30, 8).map(function (h) { return h.year; }).join();
+  assert.strictEqual(a, b);
+  assert.notStrictEqual(a, c);
+});
+
+test("history: re-randomizing changes year-to-year returns (not a constant path)", function () {
+  var p = HI.generatePath(30, 99);
+  var distinct = new Set(p.map(function (h) { return h.etf; }));
+  assert.ok(distinct.size >= 20);
+});
+
+test("history: run() with a history path uses each year's drawn returns and records the historical year", function () {
+  var p = HI.generatePath(30, 2026);
+  var rows = runTarget("中性", { pathReturns: p });
+  assert.strictEqual(rows.length, 30);
+  rows.forEach(function (r, i) {
+    assert.strictEqual(r.histYear, p[i].year);
+    assert.ok(Math.abs(r.etfRet - p[i].etf / 100) < 1e-12);
+    assert.ok(Math.abs(r.twRet - p[i].tw / 100) < 1e-12);
+    assert.ok(Math.abs(r.koRet - p[i].ko / 100) < 1e-12);
+    assert.ok(r.etf >= 0 && r.ko >= 0 && r.s2887 >= 0 && r.res >= -1e-9);
+  });
+  var plain = runTarget("中性");
+  assert.strictEqual(plain[0].histYear, undefined);
+  assert.notStrictEqual(rows[29].net, plain[29].net);
+});
+
+test("history: applyKoCap caps KO yearly gains only, keeps losses and other assets, does not mutate the source", function () {
+  var src = HI.HIST.map(function (h) { return Object.assign({}, h); });
+  var capped = HI.applyKoCap(HI.HIST, 8);
+  capped.forEach(function (h, i) {
+    var o = HI.HIST[i];
+    assert.strictEqual(h.ko, Math.min(o.ko, 8));
+    assert.strictEqual(h.etf, o.etf); assert.strictEqual(h.tw, o.tw); assert.strictEqual(h.year, o.year);
+  });
+  assert.strictEqual(capped[4].ko, -26.2);   // 2008 下跌照算
+  assert.strictEqual(capped[3].ko, 8);       // 2007 +27.2% → 8%
+  assert.deepStrictEqual(HI.HIST, src);
+  assert.deepStrictEqual(HI.applyKoCap(HI.HIST, undefined).map(function (h) { return h.ko; }), HI.HIST.map(function (h) { return h.ko; }));
+  var c = HI.cagr(capped.map(function (h) { return h.ko; }));
+  assert.ok(c > 1 && c < 2, "8% cap -> ~1.5% CAGR, got " + c);
+  assert.strictEqual(M.DEF.koCapHist, 8);
+});
+
+test("history: a lower KO cap never improves the outcome", function () {
+  var p = HI.generatePath(30, 31);
+  var lo = runTarget("中性", { pathReturns: HI.applyKoCap(p, 3) });
+  var hi = runTarget("中性", { pathReturns: HI.applyKoCap(p, 100) });
+  assert.ok(lo[29].net <= hi[29].net + 1e-9);
+  lo.forEach(function (r, i) { assert.ok(r.koRet <= 0.03 + 1e-12 && Math.abs(r.koRet - Math.min(p[i].ko, 3) / 100) < 1e-12); });
+});
+
+// ===== 熊市提領規則：距高點跌 ≥ 門檻 → 備用金優先；回到高點後補回 =====
+function bearPath(etfs) {
+  var sc = M.DEF.scen["中性"];
+  var p = [];
+  for (var i = 0; i < 30; i++) p.push({ etf: i < etfs.length ? etfs[i] : sc.etf, tw: sc.tw, ko: sc.ko });
+  return p;
+}
+var BEAR = { drawdown: 20, refill: true };
+
+test("bear rule: without bearRule results are unchanged; with constant positive returns it never triggers", function () {
+  var a = runTarget("中性");
+  var b = runTarget("中性", { bearRule: BEAR });
+  assert.strictEqual(a[29].net, b[29].net);
+  b.forEach(function (r) { assert.strictEqual(r.bear, false); assert.strictEqual(r.refill, 0); });
+  assert.strictEqual(a[0].bear, false);
+});
+
+test("bear rule: after a ≥20% drop the next year draws the reserve first (no stock sales while the reserve suffices)", function () {
+  var p = bearPath([-30]);
+  var rows = runTarget("中性", { pathReturns: p, bearRule: BEAR });
+  assert.strictEqual(rows[0].bear, false, "year 1 is never a bear year (nothing known yet)");
+  assert.strictEqual(rows[1].bear, true);
+  assert.ok(Math.abs(rows[1].drawdown - 0.3) < 1e-12);
+  assert.ok(rows[1].usedRes > 0);
+  assert.strictEqual(rows[1].wd2887, 0);
+  assert.strictEqual(rows[1].etfWd, 0);
+  assert.ok(Math.abs(rows[1].living - rows[1].target) < 1e-6, "target still met");
+  var plain = runTarget("中性", { pathReturns: p });
+  assert.ok(plain[1].wd2887 > 0 && plain[1].usedRes === 0, "default order sells 2887 instead");
+});
+
+test("bear rule: once the reserve runs out in a bear year, stocks are sold in the normal order", function () {
+  var p = bearPath([-30, 0, 0]);
+  var rows = runTarget("中性", { pathReturns: p, bearRule: { drawdown: 20, refill: false }, holdings: Object.assign({}, M.DEF.holdings, { "備用金": 60 }) });
+  var r = rows[1];
+  assert.strictEqual(r.bear, true);
+  assert.ok(r.res < 1e-6, "reserve exhausted");
+  assert.ok(r.wd2887 > 0, "then 2887");
+  assert.ok(Math.abs(r.living - r.target) < 1e-6);
+});
+
+test("bear rule: a drop smaller than the threshold does not trigger", function () {
+  var rows = runTarget("中性", { pathReturns: bearPath([-15]), bearRule: BEAR });
+  assert.strictEqual(rows[1].bear, false);
+});
+
+test("bear rule: back at the high, the reserve used in bear years is refilled from 0050+006208 (net worth unchanged by the transfer)", function () {
+  var p = bearPath([-30, 50]); // 指數 0.7 → 1.05 創新高
+  var rows = runTarget("中性", { pathReturns: p, bearRule: BEAR });
+  var noRefill = runTarget("中性", { pathReturns: p, bearRule: { drawdown: 20, refill: false } });
+  assert.strictEqual(rows[1].bear, true);
+  assert.strictEqual(rows[2].bear, false);
+  var used = rows[1].usedRes;
+  assert.ok(used > 0);
+  assert.ok(Math.abs(rows[2].refill - Math.min(used, M.DEF.holdings["備用金"] - rows[1].res)) < 1e-9);
+  assert.ok(rows[2].res > noRefill[2].res + 1, "reserve higher after refill");
+  assert.ok(rows[2].etf < noRefill[2].etf, "ETF lower after refill");
+  assert.strictEqual(noRefill[2].refill, 0);
+  assert.ok(rows[2].res <= M.DEF.holdings["備用金"] + 1e-9, "never above the original reserve");
+  rows.slice(3).forEach(function (r) { assert.strictEqual(r.refill, 0, "refilled only once"); });
+});
+
+test("bear rule: still in a drawdown (not back at the high) → no refill", function () {
+  var rows = runTarget("中性", { pathReturns: bearPath([-30, 20, 5]), bearRule: BEAR }); // 0.7 → 0.84 → 0.882
+  assert.strictEqual(rows[2].bear, false); // 距高點 16%
+  assert.strictEqual(rows[2].refill, 0);
+  assert.strictEqual(rows[3].refill, 0);
+});
+
+test("bear rule: works on random history paths without negative balances", function () {
+  [3, 17, 2026].forEach(function (seed) {
+    var p = HI.applyKoCap(HI.generatePath(30, seed), 8);
+    var rows = runTarget("中性", { pathReturns: p, bearRule: BEAR });
+    rows.forEach(function (r) {
+      assert.ok(r.etf >= -1e-9 && r.ko >= 0 && r.s2887 >= 0 && r.res >= -1e-9 && r.res <= M.DEF.holdings["備用金"] + 1e-9);
+    });
+  });
+});
+
+// ===== 資料庫記錄（records.js）=====
+var R = require("./records.js");
+
+test("records: parseYear accepts 4-digit years in range only", function () {
+  assert.strictEqual(R.parseYear("2026"), 2026);
+  assert.strictEqual(R.parseYear(" 2027 "), 2027);
+  ["", "26", "20266", "abcd", "2026.5", "1899", "2201", null, undefined].forEach(function (v) {
+    assert.strictEqual(R.parseYear(v), null, String(v));
+  });
+});
+
+test("records: snapshot copies year-1 optimistic cash-flow and asset fields (monthly target = annual / 12)", function () {
+  var row = runTarget("樂觀")[0];
+  var rec = R.snapshot(row, 2026, "2026-10-28T00:00:00.000Z");
+  assert.strictEqual(rec.year, 2026);
+  assert.strictEqual(rec.scenario, "樂觀");
+  assert.strictEqual(rec.savedAt, "2026-10-28T00:00:00.000Z");
+  assert.ok(Math.abs(rec.values.targetMonthly - row.target / 12) < 1e-12);
+  ["wd2887", "etfWd", "koWd", "div2887", "call", "resInt", "usedRes", "living", "shortfall", "loanPay",
+   "etf", "ko", "koContracts", "s2887", "shares2887Total", "sgov", "res", "assets", "net"].forEach(function (k) {
+    assert.strictEqual(rec.values[k], row[k], k);
+  });
+  assert.strictEqual(Object.keys(rec.values).length, R.FIELDS.length);
+  assert.throws(function () { R.snapshot(row, 1800); });
+  assert.throws(function () { R.snapshot(null, 2026); });
+});
+
+test("records: upsert keeps one row per year, sorted, overwrites duplicates, does not mutate input", function () {
+  var row = runTarget("樂觀")[0];
+  var a = R.upsert([], R.snapshot(row, 2027));
+  var b = R.upsert(a, R.snapshot(row, 2025));
+  assert.deepStrictEqual(b.map(function (r) { return r.year; }), [2025, 2027]);
+  assert.strictEqual(a.length, 1);
+  assert.ok(R.hasYear(b, 2025) && !R.hasYear(b, 2026));
+  var changed = R.snapshot(Object.assign({}, row, { net: 1 }), 2025);
+  var c = R.upsert(b, changed);
+  assert.strictEqual(c.length, 2);
+  assert.strictEqual(c[0].values.net, 1);
+});
+
+test("records: removeYears deletes only the chosen years; empty list = clear all", function () {
+  var row = runTarget("樂觀")[0];
+  var list = [2024, 2025, 2026].reduce(function (l, y) { return R.upsert(l, R.snapshot(row, y)); }, []);
+  assert.deepStrictEqual(R.removeYears(list, [2025]).map(function (r) { return r.year; }), [2024, 2026]);
+  assert.strictEqual(R.removeYears(list, [2024, 2025, 2026]).length, 0);
+  assert.strictEqual(R.removeYears(list, []).length, 3);
+});
+
+test("records: serialize → parse round-trips; parse accepts a bare array, skips bad rows, rejects non-JSON", function () {
+  var row = runTarget("樂觀")[0];
+  var list = [2026, 2025].reduce(function (l, y) { return R.upsert(l, R.snapshot(row, y, "t")); }, []);
+  var text = R.serialize(list);
+  var obj = JSON.parse(text);
+  assert.strictEqual(obj.app, "現金流製造機");
+  assert.strictEqual(obj.version, 1);
+  var back = R.parse(text);
+  assert.deepStrictEqual(back.records, list);
+  assert.strictEqual(back.skipped, 0);
+  var bare = R.parse(JSON.stringify([{ year: "2030", values: { net: "123.5" } }, { year: 1, values: {} }, { foo: 1 }, { year: 2030, values: { net: 9 } }]));
+  assert.strictEqual(bare.records.length, 1);
+  assert.strictEqual(bare.records[0].values.net, 9, "later duplicate wins");
+  assert.strictEqual(bare.records[0].values.living, 0, "missing field -> 0");
+  assert.strictEqual(bare.skipped, 2);
+  assert.throws(function () { R.parse("not json"); }, /JSON/);
+  assert.throws(function () { R.parse("{\"a\":1}"); }, /records/);
 });
 
 console.log("\n" + passed + " passed, " + failed + " failed");

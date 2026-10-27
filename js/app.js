@@ -3,7 +3,8 @@
 
   var STORAGE_KEY = "cfm";
   var THEME_KEY = "cfm-theme";
-  var SCEN_COLORS = { "樂觀": "#34C759", "中性": "#8E8E93" };
+  var HIST_NAME = "歷史推演";
+  var SCEN_COLORS = { "樂觀": "#34C759", "中性": "#8E8E93", "歷史推演": "#0A84FF" };
   var HOLDING_COLORS = ["#0A84FF", "#34C759", "#FF9F0A", "#FF375F", "#BF5AF2", "#8E8E93"];
 
   // KO 每股市價即時報價（Finnhub 免費額度）。Key 綁定固定網域使用，屬公開唯讀報價 API。
@@ -56,7 +57,7 @@
             }
           });
           // 提領設定獨立後新增的欄位（通膨率、推演年數、貸款年限）：舊資料補預設值。
-          ["inflation", "years", "loanYears"].forEach(function (k) {
+          ["inflation", "years", "loanYears", "koCapHist", "bearDrawdown"].forEach(function (k) {
             if (typeof parsed[k] !== "number") parsed[k] = CFMModel.DEF[k];
           });
           // 悲觀情境與股災設定已移除：清掉舊 localStorage 內的殘留資料。
@@ -81,6 +82,12 @@
   }
 
   var S = loadState();
+  ensureHistSeed();
+
+  // 歷史推演的隨機種子：存在 localStorage，重開頁面同一組配置；按「重新隨機配置」才換。
+  function ensureHistSeed() {
+    if (typeof S.histSeed !== "number" || !isFinite(S.histSeed)) S.histSeed = CFMHistory.newSeed();
+  }
   var recalcTimer = null;
   function scheduleRecalc() {
     saveState();
@@ -196,6 +203,17 @@
     container.appendChild(createStepperInput({
       id: "g_infl", label: "通膨率%", value: S.inflation, min: 0, max: 30, step: 0.5, decimals: 1,
       onChange: function (v) { S.inflation = v; scheduleRecalc(); }
+    }).el);
+  }
+
+  function buildBearInputs() {
+    var container = document.getElementById("bearInputs");
+    if (!container) return;
+    container.innerHTML = "";
+    container.appendChild(createStepperInput({
+      id: "g_bear", label: "熊市門檻：距高點跌%", value: S.bearDrawdown, min: 0, max: 90, step: 5, decimals: 0,
+      formatDisplay: function (v) { return v > 0 ? String(v) : "關閉"; },
+      onChange: function (v) { S.bearDrawdown = v; scheduleRecalc(); }
     }).el);
   }
 
@@ -447,18 +465,47 @@
       });
       table.appendChild(tr);
     });
+
+    // 歷史推演：唯讀列，顯示 2004–2025 真實歷史的年化報酬（每年實際值由隨機配置決定）。
+    var hs = CFMHistory.summary(CFMHistory.applyKoCap(CFMHistory.HIST, S.koCapHist));
+    var htr = document.createElement("tr");
+    htr.className = "r hist-row";
+    var cells = [HIST_NAME, "歷史抽樣<br><span class=\"small\">年化 " + hs.etf.toFixed(1) + "%</span>",
+      "歷史抽樣<br><span class=\"small\">年化 " + hs.tw.toFixed(1) + "%</span>",
+      "歷史抽樣<br><span class=\"small\">年化 " + hs.ko.toFixed(1) + "%</span>",
+      "同中性", "同中性"];
+    cells.forEach(function (html, i) {
+      var td = document.createElement("td");
+      td.innerHTML = html;
+      if (i === 0) td.style.color = SCEN_COLORS[HIST_NAME];
+      htr.appendChild(td);
+    });
+    table.appendChild(htr);
   }
 
   function buildAllInputs() {
     buildEtfInputs();
     buildWithdrawalInputs();
     buildHorizonInputs();
+    buildBearInputs();
     build2887Inputs();
     buildKoInputs();
     buildSgovInputs();
     buildReserveInputs();
     buildGlobalInputs();
     buildScenarioTable();
+    buildHistInputs();
+  }
+
+  // 歷史推演設定：KO 每年淨漲上限%（covered call 被履約的近似）。
+  function buildHistInputs() {
+    var container = document.getElementById("histInputs");
+    if (!container) return;
+    container.innerHTML = "";
+    container.appendChild(createStepperInput({
+      id: "h_kocap", label: "KO 每年淨漲上限%", value: S.koCapHist, min: 0, max: 100, step: 1, decimals: 1,
+      onChange: function (v) { S.koCapHist = v; buildScenarioTable(); scheduleRecalc(); }
+    }).el);
   }
 
   // ===== Tab navigation =====
@@ -475,6 +522,7 @@
       panels.forEach(function (p) {
         p.classList.toggle("is-active", p.getAttribute("data-tab") === target);
       });
+      document.dispatchEvent(new CustomEvent("cfm-tab", { detail: target }));
     }
     switchTab = activate;
     buttons.forEach(function (btn) {
@@ -656,6 +704,17 @@
       h3.textContent = name + "情境";
       block.appendChild(h3);
 
+      // 熊市規則對所有情境都啟用；固定報酬情境每年都是正報酬，永遠不會觸發，在此註明避免誤會。
+      if (S.bearDrawdown > 0 && !rows.some(function (x) { return x.bear; })) {
+        var bearNote = document.createElement("p");
+        bearNote.className = "small bear-note";
+        var allUp = rows.every(function (x) { return x.etfRet >= 0; });
+        bearNote.textContent = allUp
+          ? "🐻 熊市提領規則已啟用，但此情境 0050+006208 每年報酬固定為 " + (rows[0].etfRet * 100).toFixed(1) + "%，不會出現距高點跌 " + S.bearDrawdown + "% 的熊市，因此不會觸發。"
+          : "🐻 熊市提領規則已啟用，本次路徑中 0050+006208 未曾距高點跌達 " + S.bearDrawdown + "%，因此沒有觸發。";
+        block.appendChild(bearNote);
+      }
+
       var p1 = document.createElement("p");
       p1.className = "small";
       p1.style.margin = ".6em 0 .2em";
@@ -664,6 +723,7 @@
 
       // 目標提領率：顯示目前正在提領（最後一個有動用）的池與其提領率；順序 2887 → 0050+006208 → KO。
       function rateLabel(x) {
+        if (x.bear && x.usedRes > 0 && x.wd2887 === 0 && x.etfWd === 0 && x.koWd === 0) return "備用金優先";
         if (x.koWd > 0) return "KO " + (x.wrKo * 100).toFixed(1) + "%";
         if (x.etfWd > 0) return "ETF " + (x.wr * 100).toFixed(1) + "%";
         return "2887 " + (x.wr2887 * 100).toFixed(1) + "%";
@@ -673,7 +733,7 @@
       rows.forEach(function (x) {
         var rc = x.etfRet < 0 ? ' class="neg"' : '';
         var uc = x.usedRes > 0 ? ' class="neg"' : '';
-        rowsHtml += "<tr><td" + rc + ">" + x.yr + "</td><td>" + (x.target / 12).toFixed(2) + "</td><td" + (x.wr >= 1 ? ' class="neg"' : '') + "><strong>" + rateLabel(x) + "</strong></td><td>" + x.wd2887.toFixed(1) + "</td><td>" + x.etfWd.toFixed(1) + "</td><td>" + x.koWd.toFixed(1) + "</td><td>" + x.div2887.toFixed(1) + "</td>" +
+        rowsHtml += "<tr><td" + rc + ">" + x.yr + (x.bear ? " 🐻" : "") + "</td><td>" + (x.target / 12).toFixed(2) + "</td><td" + (x.wr >= 1 ? ' class="neg"' : '') + "><strong>" + rateLabel(x) + "</strong></td><td>" + x.wd2887.toFixed(1) + "</td><td>" + x.etfWd.toFixed(1) + "</td><td>" + x.koWd.toFixed(1) + "</td><td>" + x.div2887.toFixed(1) + "</td>" +
           "<td>" + x.call.toFixed(1) + "</td><td>" + x.resInt.toFixed(1) + "</td><td" + uc + ">" + x.usedRes.toFixed(1) + "</td>" +
           "<td><strong>" + x.living.toFixed(1) + "</strong></td><td" + (x.shortfall > 0.05 ? ' class="neg"' : '') + ">" + x.shortfall.toFixed(1) + "</td><td>" + x.loanPay.toFixed(1) + "</td></tr>";
         tot.etfWd += x.etfWd; tot.wd2887 += x.wd2887; tot.koWd += x.koWd; tot.div2887 += x.div2887; tot.call += x.call; tot.resInt += x.resInt;
@@ -696,13 +756,17 @@
       p2.textContent = "資產與淨值推演（萬）";
       block.appendChild(p2);
 
-      var rows2Html = "<tr><th>年</th><th>ETF報酬</th><th>ETF值</th><th>KO值</th><th>KO<br>口數</th><th>2887值</th><th>2887<br>總股數</th><th>SGOV</th><th>備用金</th><th>備用金<br>利率%</th><th>總資產</th><th>淨值</th></tr>";
+      var isHist = name === HIST_NAME;
+      var rows2Html = "<tr><th>年</th>" + (isHist ? "<th>歷史<br>年份</th>" : "") + "<th>ETF報酬</th><th>2887<br>報酬</th><th>KO<br>淨漲</th><th>ETF值</th><th>KO值</th><th>KO<br>口數</th><th>2887值</th><th>2887<br>總股數</th><th>SGOV</th><th>備用金</th><th>補回<br>備用金</th><th>ETF距<br>高點</th><th>備用金<br>利率%</th><th>總資產</th><th>淨值</th></tr>";
       rows.forEach(function (x) {
         var rc = x.etfRet < 0 ? ' class="neg"' : '';
-        rows2Html += "<tr><td>" + x.yr + "</td><td" + rc + ">" + (x.etfRet * 100).toFixed(0) + "%</td>" +
+        var pct = function (v) { return "<td" + (v < 0 ? ' class="neg"' : '') + ">" + (v * 100).toFixed(0) + "%</td>"; };
+        rows2Html += "<tr><td>" + x.yr + "</td>" + (isHist ? "<td>" + x.histYear + "</td>" : "") + "<td" + rc + ">" + (x.etfRet * 100).toFixed(0) + "%</td>" + pct(x.twRet) + pct(x.koRet) +
           "<td>" + x.etf.toFixed(0) + "</td><td>" + x.ko.toFixed(0) + "</td><td>" + x.koContracts + "</td><td>" + x.s2887.toFixed(0) + "</td>" +
           "<td>" + x.shares2887Total.toLocaleString() + "</td>" +
           "<td>" + x.sgov.toFixed(0) + "</td><td>" + x.res.toFixed(0) + "</td>" +
+          "<td" + (x.refill > 0 ? ' class="pos"' : '') + ">" + x.refill.toFixed(0) + "</td>" +
+          "<td" + (x.bear ? ' class="neg"' : '') + ">" + (x.drawdown > 1e-9 ? "−" + (x.drawdown * 100).toFixed(0) + "%" : "高點") + "</td>" +
           "<td>" + (x.resRate * 100).toFixed(2) + "%</td>" +
           "<td>" + x.assets.toFixed(0) + "</td>" +
           "<td><strong>" + x.net.toFixed(0) + "</strong></td></tr>";
@@ -739,10 +803,96 @@
         koUsdAmount: S.koUsdAmount,
         koPriceUsd: S.koPriceUsd,
         scenario: S.scen[name],
+        bearRule: bearRule(),
         pessimistic: false
       });
     });
+    // 歷史推演：SGOV 殖利率與 KO 每口價格沿用中性情境，ETF/2887/KO 每年報酬由隨機配置的歷史年份決定。
+    var base = S.scen["中性"] || S.scen[Object.keys(S.scen)[0]];
+    var histParams = Object.assign({}, lastParams(base), { pathReturns: getHistPath() });
+    results[HIST_NAME] = CFMModel.run(histParams);
     return results;
+  }
+
+  function lastParams(scenario) {
+    return {
+      holdings: S.holdings, fx: S.fx, loanMonthly: S.loanMonthly, livingTarget: S.livingTarget,
+      withdrawalMode: "target", inflation: S.inflation, years: S.years, loanYears: S.loanYears,
+      reserveRate: S.reserveRate, shares2887Base: S.shares2887Base,
+      dividendPerShare2887: S.dividendPerShare2887, stockDividendPerShare2887: S.stockDividendPerShare2887,
+      koUsdAmount: S.koUsdAmount, koPriceUsd: S.koPriceUsd, scenario: scenario, bearRule: bearRule(), pessimistic: false
+    };
+  }
+
+  // 熊市提領規則：門檻 0 = 關閉；回到高點後一律補回備用金。
+  function bearRule() {
+    return S.bearDrawdown > 0 ? { drawdown: S.bearDrawdown, refill: true } : null;
+  }
+
+  // 同一組 seed + 年數只產生一次路徑（產生時要回溯排除不合理組合，避免每次輸入都重算）。
+  var histCache = { key: null, path: null };
+  function getHistPath() {
+    var key = S.histSeed + ":" + S.years;
+    if (histCache.key !== key) {
+      histCache = { key: key, path: CFMHistory.generatePath(S.years, S.histSeed) };
+    }
+    return CFMHistory.applyKoCap(histCache.path, S.koCapHist);
+  }
+
+  // ===== 歷史推演卡片：摘要＋每年抽到的歷史年份 =====
+  var selectedHistIdx = null;
+  function renderHistCard() {
+    var path = getHistPath();
+    var summaryEl = document.getElementById("histSummary");
+    var strip = document.getElementById("histStrip");
+    if (!summaryEl || !strip || !path) return;
+    var cg = function (k) { return CFMHistory.cagr(path.map(function (h) { return h[k]; })).toFixed(1); };
+    var hs = CFMHistory.summary(CFMHistory.applyKoCap(CFMHistory.HIST, S.koCapHist));
+    summaryEl.textContent = "本次 " + path.length + " 年配置年化：0050 " + cg("etf") + "%、2887 " + cg("tw") + "%、KO 淨漲 " + cg("ko") +
+      "%（真實歷史 2004–2025：" + hs.etf.toFixed(1) + "%、" + hs.tw.toFixed(1) + "%、" + hs.ko.toFixed(1) + "%；KO 每年漲幅上限 " + S.koCapHist + "%）";
+
+    strip.innerHTML = "";
+    var detail = document.getElementById("histDetail");
+    if (!detail) {
+      detail = document.createElement("p");
+      detail.id = "histDetail";
+      detail.className = "hist-chip-detail";
+      strip.parentNode.insertBefore(detail, strip.nextSibling);
+    }
+    detail.textContent = "";
+    selectedHistIdx = null;
+    var fmt = function (v) { return (v > 0 ? "+" : "") + v.toFixed(1) + "%"; };
+    path.forEach(function (h, i) {
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "hist-chip " + (h.etf >= 0 ? "is-up" : "is-down");
+      chip.style.animationDelay = Math.min(i * 18, 600) + "ms";
+      chip.innerHTML = '<span class="hist-chip__idx">第' + (i + 1) + '年</span><span class="hist-chip__year">' + h.year +
+        '</span><span class="hist-chip__ret">' + fmt(h.etf) + "</span>";
+      chip.setAttribute("aria-label", "第" + (i + 1) + "年抽到 " + h.year + " 年");
+      chip.addEventListener("click", function () {
+        var chips = strip.querySelectorAll(".hist-chip");
+        chips.forEach(function (c) { c.classList.remove("is-selected"); });
+        if (selectedHistIdx === i) { selectedHistIdx = null; detail.textContent = ""; return; }
+        selectedHistIdx = i;
+        chip.classList.add("is-selected");
+        detail.textContent = "第 " + (i + 1) + " 年 ← " + h.year + " 年：0050 " + fmt(h.etf) + "、2887 " + fmt(h.tw) + "、KO 淨漲 " + fmt(h.ko);
+      });
+      strip.appendChild(chip);
+    });
+  }
+
+  function reshuffleHistory() {
+    var prev = S.histSeed;
+    do { S.histSeed = CFMHistory.newSeed(); } while (S.histSeed === prev);
+    saveState();
+    var btn = document.getElementById("btn-shuffle");
+    if (btn) {
+      btn.classList.remove("is-rolling");
+      void btn.offsetWidth; // 重新觸發動畫
+      btn.classList.add("is-rolling");
+    }
+    calc();
   }
 
   var lastResults = null;
@@ -753,10 +903,14 @@
     renderCards(results);
     drawLineChart(results);
     renderTables(results);
+    renderHistCard();
   }
 
   function resetDefaults() {
+    var keepSeed = S.histSeed;
     S = CFMModel.deepClone(CFMModel.DEF);
+    S.histSeed = keepSeed;
+    ensureHistSeed();
     saveState();
     buildAllInputs();
     calc();
@@ -789,9 +943,16 @@
         // so skip re-animating their count-up numbers on a pure theme switch.
         drawPie();
         if (lastResults) drawLineChart(lastResults);
+        document.dispatchEvent(new CustomEvent("cfm-theme", { detail: theme }));
       });
     });
   }
+
+  // 給資料庫模組（database.js）取得最新計算結果。
+  window.CFMApp = {
+    getResults: function () { return lastResults; },
+    switchTab: function (t) { switchTab(t); }
+  };
 
   function init() {
     initTabs();
@@ -807,6 +968,7 @@
       window.scrollTo(0, 0);
     });
     document.getElementById("btn-reset").addEventListener("click", resetDefaults);
+    document.getElementById("btn-shuffle").addEventListener("click", reshuffleHistory);
   }
 
   init();
