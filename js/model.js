@@ -15,10 +15,10 @@
   // 預設值依 2026-10 公開資料校準（詳見 Reference/assumptions-check.md）：
   // 2887 與 KO 的市值皆由「股數/金額 × 價格」推得，不再手填，避免市值與股數、股價互相矛盾。
   var DEF = {
-    holdings: { "0050": 300, "006208": 330, "2887": 750.64, "KO": 256.56, "SGOV": 330, "備用金": 180 },
+    holdings: { "0050": 300, "006208": 330, "2887": 750.64, "VT": 200, "KO": (62363 * 32.07) / 10000, "SGOV": 330, "美元定存": (30000 * 32.07) / 10000, "備用金": 180 },
     fx: 32.07,                // 央行 2026/10/14 銀行間收盤 32.073
     price2887: 42.65,         // 2887 每股市價(元)：市值 = 原始股數 × 每股市價 ÷ 10000
-    // 注意：holdings 的 2887 / KO 為上述推導值（176000 × 42.65 ÷ 10000；80000 × 32.07 ÷ 10000）
+    // 注意：holdings 的 2887 / KO / 美元定存 為上述推導值（176000 × 42.65 ÷ 10000；62363 × 32.07 ÷ 10000 ≈ 200 萬；30000 × 32.07 ÷ 10000）
     loanMonthly: 2.8999,
     livingTarget: 120,
     withdrawalRate: W.WITHDRAWAL_DEF.withdrawalRate,         // 0050 + 006208 提領%
@@ -31,19 +31,22 @@
     shares2887Base: 176000,
     dividendPerShare2887: 1.0,
     stockDividendPerShare2887: 0.1,
-    koUsdAmount: 80000,  // KO 總投入金額(美元)：用來自動換算股數/口數
+    usdDepositUsd: 30000, // 美元定存本金(美元)：市值 = 美元金額 × 匯率；利息全數撥入生活費、本金不複利
+    usdDepositRate: 4,    // 美元定存年利率%（固定，不隨情境變動）
+    koUsdAmount: 62363,  // KO 總投入金額(美元，約 200 萬台幣)：用來自動換算股數/口數
     koPriceUsd: 91.05,   // KO 每股市價(美元)：股數 = 總投入金額 / 每股市價
     bearDrawdown: 20,    // 熊市門檻：ETF 距高點跌 ≥ 此%，當年備用金優先提領（0 = 關閉）；回到高點後從 ETF 補回
     koCapHist: 8,        // 歷史推演：KO 每年淨漲上限%（covered call 被履約，賺不到大漲；8% 時 2004–2025 年化約 1.5%，接近中性 2%）
     scen: {
-      "樂觀": { etf: 11, tw: 8, ko: 3, sgov: 3.65, callPricePerShare: 0.8 },
-      "中性": { etf: 7, tw: 3, ko: 2, sgov: 3.0, callPricePerShare: 0.6 }
+      "樂觀": { etf: 11, tw: 8, vt: 9, ko: 3, sgov: 3.65, callPricePerShare: 0.8 },
+      "中性": { etf: 7, tw: 3, vt: 6, ko: 2, sgov: 3.0, callPricePerShare: 0.6 }
     }
   };
 
   // 2887 市值(萬) = 股數 × 每股市價(元) ÷ 10000；KO 市值(萬) = 美元金額 × 匯率 ÷ 10000。
   function value2887(shares, priceTwd) { return (shares * priceTwd) / FXk; }
   function valueKo(usdAmount, fx) { return (usdAmount * fx) / FXk; }
+  function valueUsdDeposit(usdAmount, fx) { return (usdAmount * fx) / FXk; }
 
   function clampNumber(value, min, max) {
     var result = value;
@@ -111,6 +114,9 @@
     var koPos = koPosition(params.koUsdAmount, params.koPriceUsd);
 
     var v = Object.assign({}, holdings);
+    v["VT"] = v["VT"] || 0;            // VT（全球股票 ETF）：提領池之一，報酬為情境的 vt%
+    v["美元定存"] = v["美元定存"] || 0;  // 美元定存：利息進生活費，本金為備用金之後的最後手段
+    var usdRate = (typeof params.usdDepositRate === "number" ? params.usdDepositRate : 0) / 100;
     var loanAnnual = loanMonthly * 12;
     var loanTotal = loanAnnual * loanYears;
     var loanPaid = 0;
@@ -141,6 +147,7 @@
       // 隨機路徑（蒙地卡羅）：params.pathReturns[yr-1] 可覆寫當年 etf/tw/ko 報酬%，未提供則用情境固定值。
       var ys = params.pathReturns && params.pathReturns[yr - 1] ? Object.assign({}, s, params.pathReturns[yr - 1]) : s;
       var etfRet = ys.etf / 100;
+      var vtRet = (typeof ys.vt === "number" ? ys.vt : 0) / 100;
       if (crash[yr] !== undefined) etfRet = crash[yr];
       // 該年度生活費目標（年，萬）：第 1 年為設定值，之後每年乘上 (1 + 通膨率)。
       var yearTarget = livingTarget * Math.pow(1 + inflation / 100, yr - 1);
@@ -173,6 +180,8 @@
       var resRate = reserveRate / 100;
       // 備用金利息全數撥入生活費（不再滾回本金），因此餘額只會因 SGOV 還貸缺口與股災補缺口而減少。
       var resInt = Math.min(v["備用金"], 100) * resRate;
+      // 美元定存利息（本金 × 年利率）：全數撥入生活費，本金不變（除非最後手段被動用）。
+      var usdInt = v["美元定存"] * usdRate;
 
       // 模擬三個提領池一年（純函式，不改動 v / shares）：rates = {etf, s2887, ko}（小數）。
       // 提領邏輯集中在 withdrawal.js：每月月初先扣款、剩餘部位才賺當月報酬（annuity-due），
@@ -204,6 +213,7 @@
         var s2887End = mode === "fixed" ? r2887.end : Math.max(0, r2887.end - div);
 
         // KO 提領：賣出的股數同步縮減，口數 = 剩餘股數 ÷ 100 無條件捨去，covered call 收入隨之減少。
+        var rVt = W.applyWithdrawal(v["VT"], vtRet, rates.vt || 0);
         var rKo = W.applyWithdrawal(v["KO"], ys.ko / 100, rates.ko);
         var ks = koShares;
         if (rates.ko > 0) ks = ks * rKo.ratio;
@@ -213,30 +223,33 @@
         if (crash[yr] !== undefined) koEnd *= 1 + crash[yr] * 0.6;
 
         return {
-          etfRes: etfRes, etfWd: etfWdSum,
+          etfRes: etfRes, etfWd: etfWdSum, vtEnd: rVt.end, vtWd: rVt.withdrawn,
           s2887End: s2887End, wd2887: r2887.withdrawn, shares: sh + newSharesWhole, div: div,
           koEnd: koEnd, koWd: rKo.withdrawn, koShares: ks, contracts: contracts, call: call,
-          living: etfWdSum + r2887.withdrawn + rKo.withdrawn + div + call + resInt
+          living: etfWdSum + r2887.withdrawn + rVt.withdrawn + rKo.withdrawn + div + call + resInt + usdInt
         };
       }
 
       var rates;
       if (mode === "fixed") {
-        rates = { etf: withdrawalRate / 100, s2887: withdrawalRate2887 / 100, ko: withdrawalRateKo / 100 };
+        rates = { etf: withdrawalRate / 100, s2887: withdrawalRate2887 / 100, ko: withdrawalRateKo / 100, vt: 0 };
       } else {
         // 提領順序（瀑布）：預設 2887 → 0050+006208 → KO → 備用金（最後手段）；params.order 可自訂（"res" 代表備用金），
         // params.order === "prorata" 則 0050+006208/2887/KO 三池套用同一提領率（備用金補缺口）。
         var lv = function (rt) { return simulate(rt).living; };
-        var order = params.order || ["2887", "etf", "ko", "res"];
+        var order = params.order || ["2887", "vt", "etf", "ko", "res"];
         // order 也可以是函式：每年依當下狀態（市值、上一年報酬）動態決定順序。
         if (typeof order === "function") order = order({ yr: yr, v: Object.assign({}, v), init: holdings, prev: prevRet, target: yearTarget });
         // 熊市年：備用金移到最前面優先動用，其餘池維持原順序。
         if (bear && Array.isArray(order)) order = ["res"].concat(order.filter(function (x) { return x !== "res"; }));
-        rates = { etf: 0, s2887: 0, ko: 0 };
+        rates = { etf: 0, s2887: 0, ko: 0, vt: 0 };
         var resPlan = 0;
+        var poolValue = function (pl) {
+          return pl === "etf" ? v["0050"] + v["006208"] : pl === "2887" ? v["2887"] : pl === "vt" ? v["VT"] : pl === "ko" ? v["KO"] : v["備用金"];
+        };
         if (order === "prorata") {
-          var rp = W.solveTargetRate(function (x) { return lv({ etf: x, s2887: x, ko: x }); }, yearTarget);
-          rates = { etf: rp, s2887: rp, ko: rp };
+          var rp = W.solveTargetRate(function (x) { return lv({ etf: x, s2887: x, ko: x, vt: x }); }, yearTarget);
+          rates = { etf: rp, s2887: rp, ko: rp, vt: rp };
         } else {
           // 動態上限（params.capMult，例 1 = 每池每年最多領「該池年報酬」）：先在上限內由報酬低的池依序提領，
           // 各池都到上限仍不足，才進入第二輪（不設上限）依序補足；備用金永遠最後。
@@ -245,7 +258,7 @@
           var steps = [];
           if (typeof params.capMult === "number") {
             var callY = s.callPricePerShare * 12 / params.koPriceUsd;
-            var capOf = { s2887: s.tw / 100, etf: s.etf / 100, ko: s.ko / 100 + callY };
+            var capOf = { s2887: s.tw / 100, etf: s.etf / 100, vt: (s.vt || 0) / 100, ko: s.ko / 100 + callY };
             pools.forEach(function (pl) {
               var k = pl === "2887" ? "s2887" : pl;
               steps.push({ pool: pl, cap: Math.max(0, capOf[k] * params.capMult) });
@@ -261,6 +274,7 @@
             var pool = steps[oi].pool, cap = steps[oi].cap;
             var tgt = yearTarget - resPlan;
             if (lv(rates) >= tgt - 1e-9) break;
+            if (poolValue(pool) <= 0) continue; // 沒有部位的池直接跳過
             if (pool === "res") {
               resPlan += Math.min(tgt - lv(rates), v["備用金"]);
             } else {
@@ -280,9 +294,10 @@
       v["006208"] = sim.etfRes["006208"];
       v["2887"] = sim.s2887End;
       shares2887 = sim.shares;
+      v["VT"] = sim.vtEnd;
       v["KO"] = sim.koEnd;
       koShares = sim.koShares;
-      var etfWd = sim.etfWd, wd2887 = sim.wd2887, koWd = sim.koWd;
+      var etfWd = sim.etfWd, wd2887 = sim.wd2887, koWd = sim.koWd, vtWd = sim.vtWd;
       var div2887 = sim.div, callInc = sim.call, koContracts = sim.contracts;
       var shares2887Total = shares2887;
 
@@ -296,6 +311,13 @@
         v["備用金"] -= usedRes;
         living += usedRes;
       }
+      // 最後手段：備用金也用完仍不足，才動用美元定存本金（以固定匯率換算，不計匯差）。
+      var usedUsd = 0;
+      if (mode !== "fixed" && yearTarget - living > 1e-9 && v["美元定存"] > 0) {
+        usedUsd = Math.min(yearTarget - living, v["美元定存"]);
+        v["美元定存"] -= usedUsd;
+        living += usedUsd;
+      }
 
       if (bear) bearUsed += usedRes;
       etfIdx *= 1 + etfRet;
@@ -306,8 +328,8 @@
 
       prevRet = { etf: ys.etf, tw: ys.tw, ko: ys.ko };
       rows.push({
-        yr: yr, etfRet: etfRet, twRet: ys.tw / 100, koRet: ys.ko / 100, histYear: ys.year, wr: wr, wr2887: rates.s2887, wrKo: rates.ko, living: living, target: yearTarget,
-        etf: v["0050"] + v["006208"], ko: v["KO"], s2887: v["2887"],
+        yr: yr, etfRet: etfRet, twRet: ys.tw / 100, koRet: ys.ko / 100, histYear: ys.year, wr: wr, wr2887: rates.s2887, wrKo: rates.ko, wrVt: rates.vt, living: living, target: yearTarget,
+        etf: v["0050"] + v["006208"], ko: v["KO"], s2887: v["2887"], vt: v["VT"], usd: v["美元定存"], vtRet: vtRet, vtWd: vtWd, usdInt: usdInt, usedUsd: usedUsd,
         sgov: v["SGOV"], res: v["備用金"], assets: assets, net: net,
         call: callInc, etfWd: etfWd, div2887: div2887, resInt: resInt, resRate: resRate,
         usedRes: usedRes, bear: bear, drawdown: drawdown, refill: refill, shortfall: Math.max(0, yearTarget - living), loanPay: loanPayYr, wd2887: wd2887, koWd: koWd, shares2887Total: shares2887Total,
@@ -322,6 +344,7 @@
     DEF: DEF,
     value2887: value2887,
     valueKo: valueKo,
+    valueUsdDeposit: valueUsdDeposit,
     clampNumber: clampNumber,
     sanitizeNumber: sanitizeNumber,
     deepClone: deepClone,

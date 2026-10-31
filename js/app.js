@@ -5,7 +5,7 @@
   var THEME_KEY = "cfm-theme";
   var HIST_NAME = "歷史推演";
   var SCEN_COLORS = { "樂觀": "#34C759", "中性": "#8E8E93", "歷史推演": "#0A84FF" };
-  var HOLDING_COLORS = ["#0A84FF", "#34C759", "#FF9F0A", "#FF375F", "#BF5AF2", "#8E8E93"];
+  var HOLDING_COLORS = ["#0A84FF", "#34C759", "#FF9F0A", "#64D2FF", "#FF375F", "#5E5CE6", "#BF5AF2", "#8E8E93"];
 
   // KO 每股市價即時報價（Finnhub 免費額度）。Key 綁定固定網域使用，屬公開唯讀報價 API。
   var FINNHUB_TOKEN = "daifkl1r01qr9o8h2jdgdaifkl1r01qr9o8h2je0";
@@ -57,7 +57,7 @@
             }
           });
           // 提領設定獨立後新增的欄位（通膨率、推演年數、貸款年限）：舊資料補預設值。
-          ["inflation", "years", "loanYears", "koCapHist", "bearDrawdown"].forEach(function (k) {
+          ["inflation", "years", "loanYears", "koCapHist", "bearDrawdown", "usdDepositUsd", "usdDepositRate"].forEach(function (k) {
             if (typeof parsed[k] !== "number") parsed[k] = CFMModel.DEF[k];
           });
           // 悲觀情境與股災設定已移除：清掉舊 localStorage 內的殘留資料。
@@ -67,6 +67,16 @@
           // from 總投入金額(USD) × 匯率, so stale/manual values are recomputed on load.
           parsed.holdings = parsed.holdings || {};
           parsed.holdings["KO"] = CFMModel.valueKo(parsed.koUsdAmount, parsed.fx);
+          // VT 與美元定存是後來新增的標的：舊資料補預設值；美元定存市值 = 本金(美元) × 匯率，一律重算。
+          if (typeof parsed.holdings["VT"] !== "number") parsed.holdings["VT"] = CFMModel.DEF.holdings["VT"];
+          parsed.holdings["美元定存"] = CFMModel.valueUsdDeposit(parsed.usdDepositUsd, parsed.fx);
+          Object.keys(CFMModel.DEF.scen).forEach(function (name) {
+            if (parsed.scen && parsed.scen[name] && typeof parsed.scen[name].vt !== "number") parsed.scen[name].vt = CFMModel.DEF.scen[name].vt;
+          });
+          // 依預設順序重排 key（圓餅圖與配色依 key 順序）。
+          var ordered = {};
+          Object.keys(CFMModel.DEF.holdings).forEach(function (k) { ordered[k] = parsed.holdings[k]; });
+          parsed.holdings = ordered;
           // 2887 市值改由「原始股數 × 每股市價」推得：舊資料沒有每股市價時補預設值並重算市值。
           if (typeof parsed.price2887 !== "number") parsed.price2887 = CFMModel.DEF.price2887;
           parsed.holdings["2887"] = CFMModel.value2887(parsed.shares2887Base, parsed.price2887);
@@ -193,6 +203,45 @@
   }
 
   // ===== 提領設定（獨立分頁）：月生活費目標、通膨率、推演年數 =====
+  function buildVtInputs() {
+    var container = document.getElementById("vtInputs");
+    if (!container) return;
+    container.innerHTML = "";
+    container.appendChild(createStepperInput({
+      id: "h_VT", label: "市值(萬)", value: S.holdings["VT"], min: 0, step: 10, decimals: 0,
+      onChange: function (v) { S.holdings["VT"] = v; scheduleRecalc(); }
+    }).el);
+  }
+
+  // 美元定存：市值(萬) = 本金(美元) × 匯率 ÷ 10000（推導值）；利息 = 市值 × 年利率，全數撥入生活費。
+  var usdInfoEl = null;
+  function syncUsdDepositValue() {
+    S.holdings["美元定存"] = CFMModel.valueUsdDeposit(S.usdDepositUsd, S.fx);
+  }
+  function updateUsdInfo() {
+    if (!usdInfoEl) return;
+    var v = S.holdings["美元定存"];
+    usdInfoEl.textContent = "自動計算：約 " + v.toFixed(1) + " 萬台幣（本金 × 匯率）；每年利息約 " + (v * S.usdDepositRate / 100).toFixed(2) + " 萬";
+  }
+  function buildUsdDepositInputs() {
+    var container = document.getElementById("usdInputs");
+    if (!container) return;
+    container.innerHTML = "";
+    [
+      { id: "usd_amount", label: "本金(美元)", value: S.usdDepositUsd, min: 0, step: 1000, decimals: 0,
+        formatDisplay: function (v) { return v.toLocaleString(); },
+        onChange: function (v) { S.usdDepositUsd = v; syncUsdDepositValue(); updateUsdInfo(); scheduleRecalc(); } },
+      { id: "usd_rate", label: "年利率%", value: S.usdDepositRate, min: 0, max: 100, step: 0.1, decimals: 2,
+        onChange: function (v) { S.usdDepositRate = v; updateUsdInfo(); scheduleRecalc(); } }
+    ].forEach(function (cfg) { container.appendChild(createStepperInput(cfg).el); });
+    var info = document.createElement("p");
+    info.className = "small ko-info";
+    usdInfoEl = info;
+    container.appendChild(info);
+    syncUsdDepositValue();
+    updateUsdInfo();
+  }
+
   function buildWithdrawalInputs() {
     var container = document.getElementById("withdrawalInputs");
     container.innerHTML = "";
@@ -422,7 +471,7 @@
     container.innerHTML = "";
     var configs = [
       { id: "g_fx", label: "匯率 USD/TWD", value: S.fx, min: 0.01, step: 0.1, decimals: 2,
-        onChange: function (v) { S.fx = v; syncKoHoldingValue(); updateKoInfo(); scheduleRecalc(); } }
+        onChange: function (v) { S.fx = v; syncKoHoldingValue(); syncUsdDepositValue(); updateUsdInfo(); updateKoInfo(); scheduleRecalc(); } }
     ];
     configs.forEach(function (cfg) {
       container.appendChild(createStepperInput(cfg).el);
@@ -437,6 +486,7 @@
     var configs = [
       { key: "etf", min: -100, max: 100, step: 0.5, decimals: 1 },
       { key: "tw", min: -100, max: 100, step: 0.5, decimals: 1 },
+      { key: "vt", min: -100, max: 100, step: 0.5, decimals: 1 },
       { key: "ko", min: -100, max: 100, step: 0.5, decimals: 1 },
       { key: "sgov", min: 0, max: 100, step: 0.1, decimals: 1 },
       { key: "callPricePerShare", min: 0, max: null, step: 0.1, decimals: 2 }
@@ -472,6 +522,7 @@
     htr.className = "r hist-row";
     var cells = [HIST_NAME, "歷史抽樣<br><span class=\"small\">年化 " + hs.etf.toFixed(1) + "%</span>",
       "歷史抽樣<br><span class=\"small\">年化 " + hs.tw.toFixed(1) + "%</span>",
+      "同中性",
       "歷史抽樣<br><span class=\"small\">年化 " + hs.ko.toFixed(1) + "%</span>",
       "同中性", "同中性"];
     cells.forEach(function (html, i) {
@@ -485,6 +536,8 @@
 
   function buildAllInputs() {
     buildEtfInputs();
+    buildVtInputs();
+    buildUsdDepositInputs();
     buildWithdrawalInputs();
     buildHorizonInputs();
     buildBearInputs();
@@ -723,24 +776,25 @@
 
       // 目標提領率：顯示目前正在提領（最後一個有動用）的池與其提領率；順序 2887 → 0050+006208 → KO。
       function rateLabel(x) {
-        if (x.bear && x.usedRes > 0 && x.wd2887 === 0 && x.etfWd === 0 && x.koWd === 0) return "備用金優先";
+        if (x.bear && x.usedRes > 0 && x.wd2887 === 0 && x.vtWd === 0 && x.etfWd === 0 && x.koWd === 0) return "備用金優先";
         if (x.koWd > 0) return "KO " + (x.wrKo * 100).toFixed(1) + "%";
         if (x.etfWd > 0) return "ETF " + (x.wr * 100).toFixed(1) + "%";
+        if (x.vtWd > 0) return "VT " + (x.wrVt * 100).toFixed(1) + "%";
         return "2887 " + (x.wr2887 * 100).toFixed(1) + "%";
       }
-      var tot = { shortfall: 0, etfWd: 0, wd2887: 0, div2887: 0, call: 0, resInt: 0, usedRes: 0, living: 0, loanPay: 0, koWd: 0 };
-      var rowsHtml = "<tr><th>年</th><th>月生活費<br>目標</th><th>目標<br>提領率</th><th>2887<br>提領</th><th>0050+006208<br>提領</th><th>KO<br>提領</th><th>2887<br>現金股利</th><th>KO<br>Covered Call</th><th>備用金<br>利息</th><th>備用金<br>補缺口</th><th>生活費<br>合計</th><th>未達標<br>缺口</th><th>SGOV→<br>還貸</th></tr>";
+      var tot = { shortfall: 0, etfWd: 0, wd2887: 0, div2887: 0, call: 0, resInt: 0, usedRes: 0, living: 0, loanPay: 0, koWd: 0, vtWd: 0, usdInt: 0, usedUsd: 0 };
+      var rowsHtml = "<tr><th>年</th><th>月生活費<br>目標</th><th>目標<br>提領率</th><th>2887<br>提領</th><th>VT<br>提領</th><th>0050+006208<br>提領</th><th>KO<br>提領</th><th>2887<br>現金股利</th><th>KO<br>Covered Call</th><th>美元定存<br>利息</th><th>備用金<br>利息</th><th>備用金<br>補缺口</th><th>美元定存<br>本金補缺</th><th>生活費<br>合計</th><th>未達標<br>缺口</th><th>SGOV→<br>還貸</th></tr>";
       rows.forEach(function (x) {
         var rc = x.etfRet < 0 ? ' class="neg"' : '';
         var uc = x.usedRes > 0 ? ' class="neg"' : '';
-        rowsHtml += "<tr><td" + rc + ">" + x.yr + (x.bear ? " 🐻" : "") + "</td><td>" + (x.target / 12).toFixed(2) + "</td><td" + (x.wr >= 1 ? ' class="neg"' : '') + "><strong>" + rateLabel(x) + "</strong></td><td>" + x.wd2887.toFixed(1) + "</td><td>" + x.etfWd.toFixed(1) + "</td><td>" + x.koWd.toFixed(1) + "</td><td>" + x.div2887.toFixed(1) + "</td>" +
-          "<td>" + x.call.toFixed(1) + "</td><td>" + x.resInt.toFixed(1) + "</td><td" + uc + ">" + x.usedRes.toFixed(1) + "</td>" +
+        rowsHtml += "<tr><td" + rc + ">" + x.yr + (x.bear ? " 🐻" : "") + "</td><td>" + (x.target / 12).toFixed(2) + "</td><td" + (x.wr >= 1 ? ' class="neg"' : '') + "><strong>" + rateLabel(x) + "</strong></td><td>" + x.wd2887.toFixed(1) + "</td><td>" + x.vtWd.toFixed(1) + "</td><td>" + x.etfWd.toFixed(1) + "</td><td>" + x.koWd.toFixed(1) + "</td><td>" + x.div2887.toFixed(1) + "</td>" +
+          "<td>" + x.call.toFixed(1) + "</td><td>" + x.usdInt.toFixed(1) + "</td><td>" + x.resInt.toFixed(1) + "</td><td" + uc + ">" + x.usedRes.toFixed(1) + "</td><td" + (x.usedUsd > 0 ? ' class="neg"' : '') + ">" + x.usedUsd.toFixed(1) + "</td>" +
           "<td><strong>" + x.living.toFixed(1) + "</strong></td><td" + (x.shortfall > 0.05 ? ' class="neg"' : '') + ">" + x.shortfall.toFixed(1) + "</td><td>" + x.loanPay.toFixed(1) + "</td></tr>";
-        tot.etfWd += x.etfWd; tot.wd2887 += x.wd2887; tot.koWd += x.koWd; tot.div2887 += x.div2887; tot.call += x.call; tot.resInt += x.resInt;
+        tot.vtWd += x.vtWd; tot.usdInt += x.usdInt; tot.usedUsd += x.usedUsd; tot.etfWd += x.etfWd; tot.wd2887 += x.wd2887; tot.koWd += x.koWd; tot.div2887 += x.div2887; tot.call += x.call; tot.resInt += x.resInt;
         tot.usedRes += x.usedRes; tot.shortfall += x.shortfall; tot.living += x.living; tot.loanPay += x.loanPay;
       });
-      rowsHtml += "<tr><th>" + rows.length + "年合計</th><th>—</th><th>—</th><th>" + tot.wd2887.toFixed(0) + "</th><th>" + tot.etfWd.toFixed(0) + "</th><th>" + tot.koWd.toFixed(0) + "</th><th>" + tot.div2887.toFixed(0) + "</th>" +
-        "<th>" + tot.call.toFixed(0) + "</th><th>" + tot.resInt.toFixed(0) + "</th><th>" + tot.usedRes.toFixed(0) + "</th>" +
+      rowsHtml += "<tr><th>" + rows.length + "年合計</th><th>—</th><th>—</th><th>" + tot.wd2887.toFixed(0) + "</th><th>" + tot.vtWd.toFixed(0) + "</th><th>" + tot.etfWd.toFixed(0) + "</th><th>" + tot.koWd.toFixed(0) + "</th><th>" + tot.div2887.toFixed(0) + "</th>" +
+        "<th>" + tot.call.toFixed(0) + "</th><th>" + tot.usdInt.toFixed(0) + "</th><th>" + tot.resInt.toFixed(0) + "</th><th>" + tot.usedRes.toFixed(0) + "</th><th>" + tot.usedUsd.toFixed(0) + "</th>" +
         "<th>" + tot.living.toFixed(0) + "</th><th>" + tot.shortfall.toFixed(0) + "</th><th>" + tot.loanPay.toFixed(0) + "</th></tr>";
 
       var scroll1 = document.createElement("div");
@@ -757,14 +811,14 @@
       block.appendChild(p2);
 
       var isHist = name === HIST_NAME;
-      var rows2Html = "<tr><th>年</th>" + (isHist ? "<th>歷史<br>年份</th>" : "") + "<th>ETF報酬</th><th>2887<br>報酬</th><th>KO<br>淨漲</th><th>ETF值</th><th>KO值</th><th>KO<br>口數</th><th>2887值</th><th>2887<br>總股數</th><th>SGOV</th><th>備用金</th><th>補回<br>備用金</th><th>ETF距<br>高點</th><th>備用金<br>利率%</th><th>總資產</th><th>淨值</th></tr>";
+      var rows2Html = "<tr><th>年</th>" + (isHist ? "<th>歷史<br>年份</th>" : "") + "<th>ETF報酬</th><th>2887<br>報酬</th><th>KO<br>淨漲</th><th>ETF值</th><th>VT值</th><th>KO值</th><th>KO<br>口數</th><th>2887值</th><th>2887<br>總股數</th><th>SGOV</th><th>美元<br>定存</th><th>備用金</th><th>補回<br>備用金</th><th>ETF距<br>高點</th><th>備用金<br>利率%</th><th>總資產</th><th>淨值</th></tr>";
       rows.forEach(function (x) {
         var rc = x.etfRet < 0 ? ' class="neg"' : '';
         var pct = function (v) { return "<td" + (v < 0 ? ' class="neg"' : '') + ">" + (v * 100).toFixed(0) + "%</td>"; };
         rows2Html += "<tr><td>" + x.yr + "</td>" + (isHist ? "<td>" + x.histYear + "</td>" : "") + "<td" + rc + ">" + (x.etfRet * 100).toFixed(0) + "%</td>" + pct(x.twRet) + pct(x.koRet) +
-          "<td>" + x.etf.toFixed(0) + "</td><td>" + x.ko.toFixed(0) + "</td><td>" + x.koContracts + "</td><td>" + x.s2887.toFixed(0) + "</td>" +
+          "<td>" + x.etf.toFixed(0) + "</td><td>" + x.vt.toFixed(0) + "</td><td>" + x.ko.toFixed(0) + "</td><td>" + x.koContracts + "</td><td>" + x.s2887.toFixed(0) + "</td>" +
           "<td>" + x.shares2887Total.toLocaleString() + "</td>" +
-          "<td>" + x.sgov.toFixed(0) + "</td><td>" + x.res.toFixed(0) + "</td>" +
+          "<td>" + x.sgov.toFixed(0) + "</td><td>" + x.usd.toFixed(0) + "</td><td>" + x.res.toFixed(0) + "</td>" +
           "<td" + (x.refill > 0 ? ' class="pos"' : '') + ">" + x.refill.toFixed(0) + "</td>" +
           "<td" + (x.bear ? ' class="neg"' : '') + ">" + (x.drawdown > 1e-9 ? "−" + (x.drawdown * 100).toFixed(0) + "%" : "高點") + "</td>" +
           "<td>" + (x.resRate * 100).toFixed(2) + "%</td>" +
@@ -802,6 +856,7 @@
         stockDividendPerShare2887: S.stockDividendPerShare2887,
         koUsdAmount: S.koUsdAmount,
         koPriceUsd: S.koPriceUsd,
+        usdDepositRate: S.usdDepositRate,
         scenario: S.scen[name],
         bearRule: bearRule(),
         pessimistic: false
@@ -820,7 +875,7 @@
       withdrawalMode: "target", inflation: S.inflation, years: S.years, loanYears: S.loanYears,
       reserveRate: S.reserveRate, shares2887Base: S.shares2887Base,
       dividendPerShare2887: S.dividendPerShare2887, stockDividendPerShare2887: S.stockDividendPerShare2887,
-      koUsdAmount: S.koUsdAmount, koPriceUsd: S.koPriceUsd, scenario: scenario, bearRule: bearRule(), pessimistic: false
+      koUsdAmount: S.koUsdAmount, koPriceUsd: S.koPriceUsd, usdDepositRate: S.usdDepositRate, scenario: scenario, bearRule: bearRule(), pessimistic: false
     };
   }
 

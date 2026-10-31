@@ -21,22 +21,22 @@ Repo：`jrmusa/cashflow-simulator`（private，branch main）。
 - `js/model.js`（UMD，全域 `CFMModel`）：`DEF` 預設值、`run(params)` 逐年推演、`value2887(shares, price)`、`valueKo(usd, fx)`、`deepClone`。
 - `js/app.js`：UI（iOS 風格 stepper 輸入、分頁切換 `switchTab`、圓餅圖/折線圖、結果卡片與兩張表）、localStorage（key `cfm`，含舊資料遷移 `loadState`）、主題切換、Finnhub 抓 KO 即時股價。按「重新計算」會存檔、計算並自動跳到結果頁。
 - `js/history.js`（UMD，全域 `CFMHistory`）：「歷史推演」情境。`HIST` = 2004–2025 真實年報酬（etf=0050 含息、tw=2887 含息〔companiesmarketcap 美元還原報酬按 FRED 12 月匯率換回台幣，近似〕、ko=KO 股價淨漲〔chartrow〕）；`generatePath(years, seed)` 以 mulberry32 亂數把歷史年份隨機重排（每 22 年一輪不重複、三檔同年一起抽），逐年回溯排除不合理組合：任何滾動 10 年年化須介於真實歷史最差～最好 10 年之間（`BOUNDS`），同一檔最多連續跌 3 年。純拒絕抽樣接受率≈0，所以用回溯。app 端 `S.histSeed` 存 localStorage，「重新隨機配置」按鈕換 seed；SGOV/權利金沿用中性；KO 每年淨漲上限 `S.koCapHist`（DEF 8%，近似 covered call 被履約，`applyKoCap` 只砍漲幅、下跌照算，2004–2025 套用後年化約 1.5%），在情境假設頁可調；model rows 多了 `twRet/koRet/histYear`。
-- `js/records.js`（UMD，全域 `CFMRecords`）：資料庫純邏輯。`FIELDS`（20 個欄位，cash/asset 兩組）、`snapshot(row, year)`（樂觀第 1 年列 → `{year, savedAt, scenario, values}`，targetMonthly = target/12）、`upsert`（同年份覆蓋、依年份排序）、`removeYears`、`parseYear`（4 位數 1900–2200）、`serialize`/`parse`（檔案格式 `{app, version:1, records}`，也接受純陣列，壞列略過）。
+- `js/records.js`（UMD，全域 `CFMRecords`）：資料庫純邏輯。`FIELDS`（25 個欄位，cash/asset 兩組；含 VT 提領、美元定存利息、美元定存本金補缺、VT 值、美元定存；舊記錄缺欄位時讀入為 0）、`snapshot(row, year)`（樂觀第 1 年列 → `{year, savedAt, scenario, values}`，targetMonthly = target/12）、`upsert`（同年份覆蓋、依年份排序）、`removeYears`、`parseYear`（4 位數 1900–2200）、`serialize`/`parse`（檔案格式 `{app, version:1, records}`，也接受純陣列，壞列略過）。
 - `js/database.js`：資料庫 UI。結果頁「記錄」鈕 → iOS 風格對話框輸入年份 → 重複則問是否覆蓋 → File System Access API 寫 JSON（首次 showSaveFilePicker，handle 存 IndexedDB `cfm-db`；不支援的瀏覽器如 Safari 改為下載檔案、讀檔用 input file）。本機另存 localStorage `cfm-db` 讓重開頁面仍看得到表格。資料庫頁：狀態列、讀檔（取代目前資料並改連結該檔）、重置（刪除特定年份勾選清單／完全清除，已連結檔案會同步寫回）、表格（每年一列）與淨值趨勢圖。app.js 提供 `window.CFMApp.getResults()`，並發出 `cfm-tab`／`cfm-theme` 事件讓圖表在顯示/換主題時重畫。
-- `js/model.test.js`：自製 node 測試框架（`test()`、`runScenario()` 預設為舊 fixed 模式 10 年、`runTarget()` 為 target 模式 30 年）；執行 `node js/model.test.js`，目前 71 項全過。結果摘要必須放在檔案最後。
+- `js/model.test.js`：自製 node 測試框架（`test()`、`runScenario()` 預設為舊 fixed 模式 10 年、`runTarget()` 為 target 模式 30 年）；執行 `node js/model.test.js`，目前 79 項全過。測試的 `runScenario()` 預設用 `LEGACY_HOLDINGS`（新增 VT / 美元定存之前的配置、KO 80000 USD）以維持 golden 值；新標的用 `runDef()` 以 `M.DEF` 測。結果摘要必須放在檔案最後。
 - `css/styles.css`：iOS 風格、深淺色主題、`.cards` 兩欄（≤420px 一欄）。
 - `Reference/`：`assumptions-check.md`（預設值與網路資料查證）、`withdrawal-strategy.md`（提領策略蒙地卡羅比較）、`withdrawal-montecarlo.js`（可重跑的模擬腳本）、`ref.html`（舊版三情境原型，僅參考）。
 
 ## 預設配置（DEF）
-0050 300、006208 330、2887 750.64（= 176,000 股 × 42.65）、KO 256.56（= 80,000 USD × 匯率 32.07）、SGOV 330、備用金 180（萬）。
+0050 300、006208 330、2887 750.64（= 176,000 股 × 42.65）、VT 200、KO ≈200（= 62,363 USD × 匯率 32.07）、SGOV 330、美元定存 96.21（= 30,000 USD × 匯率，年利率 4% 固定）、備用金 180（萬）；總資產約 2,387 萬。
 月生活費目標 10 萬（`livingTarget` 以「年」存 120）、通膨 2%、30 年、SGOV 還貸每月 2.8999 萬共 10 年、備用金利率 1.8%（只計前 100 萬）。
 2887：每年現金股利 1.0 元/股、股票股利 0.1 元/股（面額 10 元，零股折現金）。
-情境：樂觀 {etf 11, tw 8, ko 3, sgov 3.65, callPricePerShare 0.8}；中性 {etf 7, tw 3, ko 2, sgov 3.0, callPricePerShare 0.6}。`tw` = 2887 含股利總報酬，`ko` = KO 淨漲，KO 另有每月每股 covered call 權利金（USD）。悲觀情境與股災設定已移除（引擎內 crash 機制僅供測試）。
+情境：樂觀 {etf 11, tw 8, vt 9, ko 3, sgov 3.65, callPricePerShare 0.8}；中性 {etf 7, tw 3, vt 6, ko 2, sgov 3.0, callPricePerShare 0.6}。`tw` = 2887 含股利總報酬，`ko` = KO 淨漲，KO 另有每月每股 covered call 權利金（USD）。悲觀情境與股災設定已移除（引擎內 crash 機制僅供測試）。
 
 ## run() 每年流程（target 模式）
 1. 當年目標 = livingTarget × (1+通膨)^(yr−1)。
 2. SGOV：加利息、扣還貸（貸款年限內）；不足由備用金扣。備用金利息 `min(餘額,100)×利率` 全數撥入生活費（不複利）。
-3. 提領瀑布（預設 `order = ["2887","etf","ko","res"]`）：依序對各池用 `solveTargetRate` 求提領率，前一池到 100% 仍不足才動下一池；備用金（res）是最後手段，由年底「缺口 = 目標 − 生活費」補足。生活費 = ETF 提領 + 2887 提領 + KO 提領 + 2887 現金股利 + KO covered call + 備用金利息。
+3. 提領瀑布（預設 `order = ["2887","vt","etf","ko","res"]`，沒有部位的池會被跳過）：依序對各池用 `solveTargetRate` 求提領率，前一池到 100% 仍不足才動下一池；備用金（res）是最後手段，由年底「缺口 = 目標 − 生活費」補足。生活費 = ETF 提領 + 2887 提領 + KO 提領 + 2887 現金股利 + KO covered call + 備用金利息 + 美元定存利息；備用金補完缺口後，仍不足才動用美元定存本金（`usedUsd`，最後手段）。VT 為提領池（`vtWd`、`wrVt`，歷史推演的 VT 報酬沿用中性情境固定值）；美元定存利息 = 市值 × `usdDepositRate`，本金不複利。
 4. 2887：提領後股數同比例減少，股利以提領後股數計；市值成長 = 總報酬 − 現金股利（配股留在部位）。
 5. KO：股數 = USD ÷ 股價；口數 = floor(剩餘股數/100)；call 收入 = 口數×100×權利金×12×匯率/FXk。
 6. 列欄位：yr, target, wr(ETF), wr2887, wrKo, etfWd, wd2887, koWd, div2887, call, resInt, usedRes, living, shortfall, loanPay, etf, s2887, ko, sgov, res, assets, net, shares2887Total, koShares, koContracts…

@@ -20,11 +20,15 @@ function test(name, fn) {
   }
 }
 
+// 舊版（新增 VT / 美元定存之前）的配置：golden 回歸測試與既有行為測試都以此為準。
+var LEGACY_HOLDINGS = { "0050": 300, "006208": 330, "2887": 750.64, "KO": 256.56, "SGOV": 330, "備用金": 180 };
+var LEGACY_KO_USD = 80000;
+
 function runScenario(name, overrides) {
   var DEF = M.DEF;
   var state = overrides || {};
   return M.run({
-    holdings: state.holdings || DEF.holdings,
+    holdings: state.holdings || LEGACY_HOLDINGS,
     fx: state.fx !== undefined ? state.fx : DEF.fx,
     loanMonthly: state.loanMonthly !== undefined ? state.loanMonthly : DEF.loanMonthly,
     livingTarget: state.livingTarget !== undefined ? state.livingTarget : DEF.livingTarget,
@@ -45,7 +49,8 @@ function runScenario(name, overrides) {
     shares2887Base: state.shares2887Base !== undefined ? state.shares2887Base : DEF.shares2887Base,
     dividendPerShare2887: state.dividendPerShare2887 !== undefined ? state.dividendPerShare2887 : DEF.dividendPerShare2887,
     stockDividendPerShare2887: state.stockDividendPerShare2887 !== undefined ? state.stockDividendPerShare2887 : DEF.stockDividendPerShare2887,
-    koUsdAmount: state.koUsdAmount !== undefined ? state.koUsdAmount : DEF.koUsdAmount,
+    koUsdAmount: state.koUsdAmount !== undefined ? state.koUsdAmount : LEGACY_KO_USD,
+    usdDepositRate: state.usdDepositRate,
     koPriceUsd: state.koPriceUsd !== undefined ? state.koPriceUsd : DEF.koPriceUsd,
     scenario: state.scenario || (name === "悲觀" ? PESS : DEF.scen[name]),
     crash: state.crash || CRASH,
@@ -55,7 +60,20 @@ function runScenario(name, overrides) {
 
 // 1. Default integrity
 test("DEF constants match reference exactly", function () {
-  assert.deepStrictEqual(M.DEF.holdings, { "0050": 300, "006208": 330, "2887": 750.64, "KO": 256.56, "SGOV": 330, "備用金": 180 });
+  assert.deepStrictEqual(Object.keys(M.DEF.holdings).sort(), ["0050", "006208", "2887", "KO", "SGOV", "VT", "美元定存", "備用金"].sort());
+  assert.strictEqual(M.DEF.holdings["0050"], 300);
+  assert.strictEqual(M.DEF.holdings["006208"], 330);
+  assert.strictEqual(M.DEF.holdings["2887"], 750.64);
+  assert.strictEqual(M.DEF.holdings["VT"], 200);
+  assert.strictEqual(M.DEF.holdings["SGOV"], 330);
+  assert.strictEqual(M.DEF.holdings["備用金"], 180);
+  assert.ok(Math.abs(M.DEF.holdings["KO"] - 200) < 0.01, "KO 約 200 萬台幣");
+  assert.strictEqual(M.DEF.koUsdAmount, 62363);
+  assert.strictEqual(M.DEF.usdDepositUsd, 30000);
+  assert.strictEqual(M.DEF.usdDepositRate, 4);
+  assert.ok(Math.abs(M.DEF.holdings["美元定存"] - 30000 * 32.07 / 10000) < 1e-9);
+  assert.strictEqual(M.DEF.scen["中性"].vt, 6);
+  assert.strictEqual(M.DEF.scen["樂觀"].vt, 9);
   assert.strictEqual(M.DEF.fx, 32.07);
   assert.strictEqual(M.DEF.price2887, 42.65);
   assert.strictEqual(M.DEF.loanMonthly, 2.8999);
@@ -65,10 +83,10 @@ test("DEF constants match reference exactly", function () {
   assert.strictEqual(M.DEF.shares2887Base, 176000);
   assert.strictEqual(M.DEF.dividendPerShare2887, 1.0);
   assert.strictEqual(M.DEF.stockDividendPerShare2887, 0.1);
-  assert.strictEqual(M.DEF.koUsdAmount, 80000);
+  assert.strictEqual(M.DEF.koUsdAmount, 62363);
   assert.strictEqual(M.DEF.koPriceUsd, 91.05);
-  assert.deepStrictEqual(M.DEF.scen["樂觀"], { etf: 11, tw: 8, ko: 3, sgov: 3.65, callPricePerShare: 0.8 });
-  assert.deepStrictEqual(M.DEF.scen["中性"], { etf: 7, tw: 3, ko: 2, sgov: 3.0, callPricePerShare: 0.6 });
+  assert.deepStrictEqual(M.DEF.scen["樂觀"], { etf: 11, tw: 8, vt: 9, ko: 3, sgov: 3.65, callPricePerShare: 0.8 });
+  assert.deepStrictEqual(M.DEF.scen["中性"], { etf: 7, tw: 3, vt: 6, ko: 2, sgov: 3.0, callPricePerShare: 0.6 });
   assert.deepStrictEqual(Object.keys(M.DEF.scen), ["樂觀", "中性"]);
   assert.strictEqual(M.DEF.crash, undefined);
   assert.strictEqual(M.FXk, 10000);
@@ -108,11 +126,11 @@ test("run() returns 10 sequential rows with expected fields", function () {
 test("withdrawal rate is always the configured rate, regardless of that year's return", function () {
   function wrForReturn(pct, withdrawalRate) {
     var rows = M.run({ withdrawalMode: "fixed",
-      holdings: M.DEF.holdings, fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly,
+      holdings: LEGACY_HOLDINGS, fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly,
       livingTarget: M.DEF.livingTarget, withdrawalRate: withdrawalRate, reserveRate: M.DEF.reserveRate,
       shares2887Base: M.DEF.shares2887Base, dividendPerShare2887: M.DEF.dividendPerShare2887,
       stockDividendPerShare2887: M.DEF.stockDividendPerShare2887,
-      koUsdAmount: M.DEF.koUsdAmount, koPriceUsd: M.DEF.koPriceUsd,
+      koUsdAmount: LEGACY_KO_USD, koPriceUsd: M.DEF.koPriceUsd,
       scenario: { etf: pct, tw: 0, ko: 0, sgov: 0, callPricePerShare: 0 },
       crash: { y1: 99, m1: 0, y2: 98, m2: 0 }, pessimistic: false
     });
@@ -181,7 +199,7 @@ test("crash years only affect their configured year, KO gets 0.6x haircut only t
     }
   });
   // KO haircut only applies in crash years: verify against a manual replay of yr1-3 KO value.
-  var ko = M.DEF.holdings["KO"];
+  var ko = LEGACY_HOLDINGS["KO"];
   ko = ko * (1 + PESS.ko / 100); // yr1, no crash
   ko = ko * (1 + PESS.ko / 100); // yr2, no crash
   ko = ko * (1 + PESS.ko / 100); // yr3 growth
@@ -222,10 +240,10 @@ test("2887 fractional stock-dividend shares are cashed out at face value, not ro
   var rate = 0.1;
   var divRate = 1.0;
   var rows = M.run({ withdrawalMode: "fixed",
-    holdings: M.DEF.holdings, fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly, livingTarget: M.DEF.livingTarget,
+    holdings: LEGACY_HOLDINGS, fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly, livingTarget: M.DEF.livingTarget,
     withdrawalRate: M.DEF.withdrawalRate, reserveRate: M.DEF.reserveRate,
     shares2887Base: base, dividendPerShare2887: divRate, stockDividendPerShare2887: rate,
-    koUsdAmount: M.DEF.koUsdAmount, koPriceUsd: M.DEF.koPriceUsd,
+    koUsdAmount: LEGACY_KO_USD, koPriceUsd: M.DEF.koPriceUsd,
     scenario: M.DEF.scen["中性"], crash: CRASH, pessimistic: false
   });
   var stockDividendValueYuan = base * rate; // 17612.3 元
@@ -243,7 +261,7 @@ test("2887 fractional stock-dividend shares are cashed out at face value, not ro
 // income = contracts * 100 shares/contract * callPricePerShare * 12 * fx / FXk.
 test("covered call income = floor(shares/100) contracts * 100 * callPricePerShare * 12 * fx / FXk", function () {
   var rows = runScenario("中性");
-  var shares = M.DEF.koUsdAmount / M.DEF.koPriceUsd;
+  var shares = LEGACY_KO_USD / M.DEF.koPriceUsd;
   var contracts = Math.floor(shares / 100);
   var expected = (contracts * 100 * M.DEF.scen["中性"].callPricePerShare * 12 * M.DEF.fx) / M.FXk;
   assert.ok(Math.abs(rows[0].call - expected) < 1e-9);
@@ -266,12 +284,12 @@ test("koPosition floors partial contracts (e.g. 1230 shares -> 12 contracts)", f
 // 7. SGOV shortfall borrowing from reserve
 test("SGOV deficit is absorbed by 備用金 and SGOV clamps to 0", function () {
   var rows = M.run({ withdrawalMode: "fixed",
-    holdings: Object.assign({}, M.DEF.holdings, { SGOV: 10, "備用金": 500 }),
+    holdings: Object.assign({}, LEGACY_HOLDINGS, { SGOV: 10, "備用金": 500 }),
     fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly, livingTarget: M.DEF.livingTarget,
     withdrawalRate: M.DEF.withdrawalRate, reserveRate: M.DEF.reserveRate,
     shares2887Base: M.DEF.shares2887Base, dividendPerShare2887: M.DEF.dividendPerShare2887,
     stockDividendPerShare2887: M.DEF.stockDividendPerShare2887,
-    koUsdAmount: M.DEF.koUsdAmount, koPriceUsd: M.DEF.koPriceUsd,
+    koUsdAmount: LEGACY_KO_USD, koPriceUsd: M.DEF.koPriceUsd,
     scenario: M.DEF.scen["中性"],
     crash: CRASH, pessimistic: false
   });
@@ -287,12 +305,12 @@ test("SGOV deficit is absorbed by 備用金 and SGOV clamps to 0", function () {
 test("備用金 interest capped at min(balance,100) and scales with configurable reserveRate", function () {
   function resIntFor(reserveBalance, reserveRate) {
     var rows = M.run({ withdrawalMode: "fixed",
-      holdings: Object.assign({}, M.DEF.holdings, { "備用金": reserveBalance }),
+      holdings: Object.assign({}, LEGACY_HOLDINGS, { "備用金": reserveBalance }),
       fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly, livingTarget: M.DEF.livingTarget,
       withdrawalRate: M.DEF.withdrawalRate, reserveRate: reserveRate,
       shares2887Base: M.DEF.shares2887Base, dividendPerShare2887: M.DEF.dividendPerShare2887,
       stockDividendPerShare2887: M.DEF.stockDividendPerShare2887,
-      koUsdAmount: M.DEF.koUsdAmount, koPriceUsd: M.DEF.koPriceUsd,
+      koUsdAmount: LEGACY_KO_USD, koPriceUsd: M.DEF.koPriceUsd,
       scenario: M.DEF.scen["中性"],
       crash: CRASH, pessimistic: false
     });
@@ -314,11 +332,11 @@ test("備用金 interest capped at min(balance,100) and scales with configurable
 // 9. Gap-filling condition
 test("reserve gap-filling only triggers when gap>0 and etfRet<-5%", function () {
   var positiveRows = M.run({ withdrawalMode: "fixed",
-    holdings: M.DEF.holdings, fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly,
+    holdings: LEGACY_HOLDINGS, fx: M.DEF.fx, loanMonthly: M.DEF.loanMonthly,
     livingTarget: M.DEF.livingTarget, withdrawalRate: M.DEF.withdrawalRate, reserveRate: M.DEF.reserveRate,
     shares2887Base: M.DEF.shares2887Base, dividendPerShare2887: M.DEF.dividendPerShare2887,
     stockDividendPerShare2887: M.DEF.stockDividendPerShare2887,
-    koUsdAmount: M.DEF.koUsdAmount, koPriceUsd: M.DEF.koPriceUsd,
+    koUsdAmount: LEGACY_KO_USD, koPriceUsd: M.DEF.koPriceUsd,
     scenario: { etf: 3, tw: 0, ko: 0, sgov: 0, callPricePerShare: 0 },
     crash: { y1: 99, m1: 0, y2: 98, m2: 0 }, pessimistic: false
   });
@@ -412,10 +430,10 @@ test("applyWithdrawal: a pool that runs dry clamps at 0 and only withdraws what 
 test("default run() is 30 years with sequential year numbers", function () {
   var DEF = M.DEF;
   var rows = M.run({ withdrawalMode: "fixed",
-    holdings: DEF.holdings, fx: DEF.fx, loanMonthly: DEF.loanMonthly, livingTarget: DEF.livingTarget,
+    holdings: LEGACY_HOLDINGS, fx: DEF.fx, loanMonthly: DEF.loanMonthly, livingTarget: DEF.livingTarget,
     withdrawalRate: DEF.withdrawalRate, withdrawalRate2887: DEF.withdrawalRate2887, withdrawalRateKo: DEF.withdrawalRateKo,
     reserveRate: DEF.reserveRate, shares2887Base: DEF.shares2887Base, dividendPerShare2887: DEF.dividendPerShare2887,
-    stockDividendPerShare2887: DEF.stockDividendPerShare2887, koUsdAmount: DEF.koUsdAmount, koPriceUsd: DEF.koPriceUsd,
+    stockDividendPerShare2887: DEF.stockDividendPerShare2887, koUsdAmount: LEGACY_KO_USD, koPriceUsd: DEF.koPriceUsd,
     scenario: DEF.scen["中性"], crash: CRASH, pessimistic: false
   });
   assert.strictEqual(rows.length, 30);
@@ -437,7 +455,7 @@ test("first 10 years of a 30-year run equal a 10-year run (horizon doesn't chang
 test("2887 withdrawal: withdrawn = start value * rate in year 1, goes into living, and reduces share count", function () {
   var base = runScenario("中性", { withdrawalRate2887: 0 });
   var wd = runScenario("中性", { withdrawalRate2887: 4 });
-  assert.ok(Math.abs(wd[0].wd2887 - M.DEF.holdings["2887"] * 0.04) < 1e-9);
+  assert.ok(Math.abs(wd[0].wd2887 - LEGACY_HOLDINGS["2887"] * 0.04) < 1e-9);
   assert.strictEqual(base[0].wd2887, 0);
   assert.ok(wd[0].shares2887Total < base[0].shares2887Total);
   assert.ok(wd[0].div2887 < base[0].div2887 + 1e-9);
@@ -448,7 +466,7 @@ test("2887 withdrawal: withdrawn = start value * rate in year 1, goes into livin
 test("KO withdrawal: withdrawn = start value * rate in year 1, contracts shrink and call income falls", function () {
   var base = runScenario("中性", { withdrawalRateKo: 0 });
   var wd = runScenario("中性", { withdrawalRateKo: 4 });
-  assert.ok(Math.abs(wd[0].koWd - M.DEF.holdings["KO"] * 0.04) < 1e-9);
+  assert.ok(Math.abs(wd[0].koWd - LEGACY_HOLDINGS["KO"] * 0.04) < 1e-9);
   assert.strictEqual(base[0].koWd, 0);
   var bigKo = runScenario("中性", { withdrawalRateKo: 50, years: 5 });
   assert.ok(bigKo[4].koContracts < bigKo[0].koContracts || bigKo[0].koContracts < base[0].koContracts);
@@ -525,7 +543,7 @@ test("target mode waterfall: 2887 first, then 0050+006208, then KO, 備用金 la
   var rows = runTarget("中性");
   var r = rows[0];
   assert.ok(r.wr2887 > 0 && r.wr2887 < 1);
-  assert.ok(Math.abs(r.wd2887 - M.DEF.holdings["2887"] * r.wr2887) < 1e-9);
+  assert.ok(Math.abs(r.wd2887 - LEGACY_HOLDINGS["2887"] * r.wr2887) < 1e-9);
   assert.strictEqual(r.etfWd, 0);
   assert.strictEqual(r.koWd, 0);
   assert.strictEqual(r.usedRes, 0);
@@ -586,10 +604,10 @@ test("fixed mode still reproduces legacy behaviour (explicit opt-in)", function 
 test("備用金 interest is spent as living, not compounded: balance stays flat when no SGOV deficit and no gap fill", function () {
   var rows = runScenario("中性");
   rows.forEach(function (r) {
-    assert.ok(Math.abs(r.res - M.DEF.holdings["備用金"]) < 1e-9, "yr" + r.yr + " res=" + r.res);
+    assert.ok(Math.abs(r.res - LEGACY_HOLDINGS["備用金"]) < 1e-9, "yr" + r.yr + " res=" + r.res);
   });
   var t = runTarget("中性");
-  var prev = M.DEF.holdings["備用金"];
+  var prev = LEGACY_HOLDINGS["備用金"];
   t.forEach(function (r) {
     assert.ok(Math.abs(r.res - (prev - r.usedRes)) < 1e-9, "yr" + r.yr);
     prev = r.res;
@@ -621,7 +639,7 @@ test("shortfall = target - living once the reserve is also exhausted; 0 otherwis
 test("2887 scenario % is total return incl. dividends: value growth = total return - cash dividend (target mode)", function () {
   // 目標極小 → 提領率 0，單純檢視年度市值變化
   var rows = runTarget("中性", { livingTarget: 0.001, years: 3 });
-  var v = M.DEF.holdings["2887"];
+  var v = LEGACY_HOLDINGS["2887"];
   rows.forEach(function (r) {
     assert.strictEqual(r.wd2887, 0);
     var expected = v * 1.03 - r.div2887;
@@ -633,14 +651,14 @@ test("2887 scenario % is total return incl. dividends: value growth = total retu
 test("2887 price growth is lower than total return by roughly the cash dividend yield; fixed mode keeps legacy full-return growth", function () {
   var target = runTarget("樂觀", { livingTarget: 0.001, years: 1 })[0];
   var fixed = runScenario("樂觀", { years: 1 })[0];
-  assert.ok(Math.abs(fixed.s2887 - M.DEF.holdings["2887"] * 1.08) < 1e-9);
+  assert.ok(Math.abs(fixed.s2887 - LEGACY_HOLDINGS["2887"] * 1.08) < 1e-9);
   assert.ok(Math.abs((fixed.s2887 - target.s2887) - target.div2887) < 1e-9);
 });
 
 
 test("order param: default equals explicit [2887,etf,ko,res]; reserve-first spends the reserve in year 1; prorata applies one rate to all pools", function () {
   var a = runTarget("中性", { livingTarget: 100 });
-  var b = runTarget("中性", { livingTarget: 100, order: ["2887", "etf", "ko", "res"] });
+  var b = runTarget("中性", { livingTarget: 100, order: ["2887", "vt", "etf", "ko", "res"] });
   assert.strictEqual(a[29].net, b[29].net);
   var c = runTarget("中性", { livingTarget: 100, order: ["res", "etf", "2887", "ko"], years: 3 });
   assert.ok(c[0].usedRes > 0);
@@ -661,7 +679,7 @@ test("pathReturns: constant path equal to the scenario reproduces the determinis
   var sc = M.DEF.scen["中性"];
   var p = []; for (var i = 0; i < 30; i++) p.push({ etf: sc.etf, tw: sc.tw, ko: sc.ko });
   var a = runTarget("中性");
-  var b = runTarget("中性", { pathReturns: p, order: function () { return ["2887", "etf", "ko", "res"]; } });
+  var b = runTarget("中性", { pathReturns: p, order: function () { return ["2887", "vt", "etf", "ko", "res"]; } });
   assert.strictEqual(a[29].net, b[29].net);
 });
 
@@ -804,7 +822,7 @@ test("bear rule: after a ≥20% drop the next year draws the reserve first (no s
 
 test("bear rule: once the reserve runs out in a bear year, stocks are sold in the normal order", function () {
   var p = bearPath([-30, 0, 0]);
-  var rows = runTarget("中性", { pathReturns: p, bearRule: { drawdown: 20, refill: false }, holdings: Object.assign({}, M.DEF.holdings, { "備用金": 60 }) });
+  var rows = runTarget("中性", { pathReturns: p, bearRule: { drawdown: 20, refill: false }, holdings: Object.assign({}, LEGACY_HOLDINGS, { "備用金": 60 }) });
   var r = rows[1];
   assert.strictEqual(r.bear, true);
   assert.ok(r.res < 1e-6, "reserve exhausted");
@@ -825,11 +843,11 @@ test("bear rule: back at the high, the reserve used in bear years is refilled fr
   assert.strictEqual(rows[2].bear, false);
   var used = rows[1].usedRes;
   assert.ok(used > 0);
-  assert.ok(Math.abs(rows[2].refill - Math.min(used, M.DEF.holdings["備用金"] - rows[1].res)) < 1e-9);
+  assert.ok(Math.abs(rows[2].refill - Math.min(used, LEGACY_HOLDINGS["備用金"] - rows[1].res)) < 1e-9);
   assert.ok(rows[2].res > noRefill[2].res + 1, "reserve higher after refill");
   assert.ok(rows[2].etf < noRefill[2].etf, "ETF lower after refill");
   assert.strictEqual(noRefill[2].refill, 0);
-  assert.ok(rows[2].res <= M.DEF.holdings["備用金"] + 1e-9, "never above the original reserve");
+  assert.ok(rows[2].res <= LEGACY_HOLDINGS["備用金"] + 1e-9, "never above the original reserve");
   rows.slice(3).forEach(function (r) { assert.strictEqual(r.refill, 0, "refilled only once"); });
 });
 
@@ -845,7 +863,7 @@ test("bear rule: works on random history paths without negative balances", funct
     var p = HI.applyKoCap(HI.generatePath(30, seed), 8);
     var rows = runTarget("中性", { pathReturns: p, bearRule: BEAR });
     rows.forEach(function (r) {
-      assert.ok(r.etf >= -1e-9 && r.ko >= 0 && r.s2887 >= 0 && r.res >= -1e-9 && r.res <= M.DEF.holdings["備用金"] + 1e-9);
+      assert.ok(r.etf >= -1e-9 && r.ko >= 0 && r.s2887 >= 0 && r.res >= -1e-9 && r.res <= LEGACY_HOLDINGS["備用金"] + 1e-9);
     });
   });
 });
@@ -868,8 +886,8 @@ test("records: snapshot copies year-1 optimistic cash-flow and asset fields (mon
   assert.strictEqual(rec.scenario, "樂觀");
   assert.strictEqual(rec.savedAt, "2026-10-28T00:00:00.000Z");
   assert.ok(Math.abs(rec.values.targetMonthly - row.target / 12) < 1e-12);
-  ["wd2887", "etfWd", "koWd", "div2887", "call", "resInt", "usedRes", "living", "shortfall", "loanPay",
-   "etf", "ko", "koContracts", "s2887", "shares2887Total", "sgov", "res", "assets", "net"].forEach(function (k) {
+  ["wd2887", "vtWd", "etfWd", "koWd", "div2887", "call", "usdInt", "resInt", "usedRes", "usedUsd", "living", "shortfall", "loanPay",
+   "etf", "vt", "ko", "koContracts", "s2887", "shares2887Total", "sgov", "usd", "res", "assets", "net"].forEach(function (k) {
     assert.strictEqual(rec.values[k], row[k], k);
   });
   assert.strictEqual(Object.keys(rec.values).length, R.FIELDS.length);
@@ -915,6 +933,102 @@ test("records: serialize → parse round-trips; parse accepts a bare array, skip
   assert.strictEqual(bare.skipped, 2);
   assert.throws(function () { R.parse("not json"); }, /JSON/);
   assert.throws(function () { R.parse("{\"a\":1}"); }, /records/);
+});
+
+
+// ===== VT 與美元定存 =====
+function runDef(name, overrides) {
+  var D = M.DEF;
+  return M.run(Object.assign({
+    holdings: D.holdings, fx: D.fx, loanMonthly: D.loanMonthly, livingTarget: D.livingTarget,
+    withdrawalMode: "target", inflation: D.inflation, years: 30, loanYears: D.loanYears,
+    reserveRate: D.reserveRate, shares2887Base: D.shares2887Base,
+    dividendPerShare2887: D.dividendPerShare2887, stockDividendPerShare2887: D.stockDividendPerShare2887,
+    koUsdAmount: D.koUsdAmount, koPriceUsd: D.koPriceUsd, usdDepositRate: D.usdDepositRate,
+    scenario: D.scen[name], pessimistic: false
+  }, overrides || {}));
+}
+
+test("VT not withdrawn compounds at the scenario vt% (固定報酬)", function () {
+  var rows = runDef("中性", { livingTarget: 1, years: 3 });
+  assert.ok(Math.abs(rows[0].vt - 200 * 1.06) < 1e-9);
+  assert.ok(Math.abs(rows[2].vt - 200 * Math.pow(1.06, 3)) < 1e-9);
+  assert.strictEqual(rows[0].vtWd, 0);
+});
+
+test("美元定存: interest = principal x 4% goes into living every year, principal unchanged while the target is met", function () {
+  var rows = runDef("中性", { livingTarget: 1, years: 3 });
+  var principal = M.DEF.holdings["美元定存"];
+  rows.forEach(function (r) {
+    assert.ok(Math.abs(r.usdInt - principal * 0.04) < 1e-9);
+    assert.ok(Math.abs(r.usd - principal) < 1e-9);
+    assert.strictEqual(r.usedUsd, 0);
+  });
+});
+
+test("waterfall with VT: 2887 -> VT -> 0050+006208 -> KO, 備用金 then 美元定存 last", function () {
+  var rows = runDef("中性");
+  var seenVt = false;
+  rows.forEach(function (x) {
+    if (x.vtWd > 1e-9) { seenVt = true; assert.ok(x.wr2887 >= 1 - 1e-9, "VT only after 2887 fully sold, yr" + x.yr); }
+    if (x.etfWd > 1e-9) assert.ok(x.vt < 1e-9 || x.vtWd > 0, "ETF only once VT is being/was drawn, yr" + x.yr);
+    if (x.koWd > 1e-9) assert.ok(x.wr >= 1 - 1e-9, "KO only after ETF capped, yr" + x.yr);
+    if (x.usedRes > 1e-9) assert.ok(x.wrKo >= 1 - 1e-9 || x.ko < 1e-9, "reserve only after every pool, yr" + x.yr);
+    if (x.usedUsd > 1e-9) assert.ok(x.res < 1e-9, "美元定存本金 only after 備用金 is empty, yr" + x.yr);
+    if (x.shortfall > 1e-6) assert.ok(x.res < 1e-9 && x.usd < 1e-9, "shortfall only when reserve and 美元定存 are empty, yr" + x.yr);
+  });
+  assert.ok(seenVt, "VT is eventually withdrawn in a 30-year neutral run");
+});
+
+test("美元定存 principal is spent only after 備用金, then interest shrinks with it", function () {
+  var rows = runDef("中性", { livingTarget: 3000, years: 4 });
+  var r = rows[0];
+  assert.ok(r.usedRes > 0);
+  assert.ok(r.usedUsd > 0 && r.usd < 1e-9, "tiny deposit fully used when the target is huge");
+  assert.ok(rows[1].usdInt < 1e-9, "no principal -> no interest next year");
+});
+
+test("new default allocation: finite, non-negative and net > 0 in year 1 for both scenarios", function () {
+  ["樂觀", "中性"].forEach(function (n) {
+    var rows = runDef(n);
+    assert.strictEqual(rows.length, 30);
+    rows.forEach(function (r) {
+      ["vt", "usd", "ko", "s2887", "etf", "res", "sgov", "net", "living"].forEach(function (k) {
+        assert.ok(isFinite(r[k]), n + " yr" + r.yr + " " + k);
+      });
+      assert.ok(r.vt >= -1e-9 && r.usd >= -1e-9);
+    });
+    assert.ok(rows[0].net > 1500);
+  });
+});
+
+test("pools with no holdings are skipped (legacy holdings without VT / 美元定存 behave as before)", function () {
+  var rows = runTarget("中性", { livingTarget: 6000, years: 2 });
+  assert.strictEqual(rows[0].vtWd, 0);
+  assert.strictEqual(rows[0].usdInt, 0);
+  assert.strictEqual(rows[0].usedUsd, 0);
+});
+
+test("records: new default allocation row stores VT and 美元定存 values (value, interest) and round-trips", function () {
+  var row = runDef("樂觀")[0];
+  var rec = R.snapshot(row, 2026, "t");
+  assert.ok(rec.values.vt > 200, "VT 值（含第 1 年成長）");
+  assert.ok(Math.abs(rec.values.usd - M.DEF.holdings["美元定存"]) < 1e-9);
+  assert.ok(Math.abs(rec.values.usdInt - M.DEF.holdings["美元定存"] * 0.04) < 1e-9);
+  ["vtWd", "usedUsd"].forEach(function (k) { assert.ok(k in rec.values, k); });
+  var back = R.parse(R.serialize(R.upsert([], rec)));
+  assert.deepStrictEqual(back.records[0].values, rec.values);
+  ["vt", "usd", "usdInt", "vtWd", "usedUsd"].forEach(function (k) {
+    assert.ok(R.FIELDS.some(function (f) { return f.key === k; }), k + " in FIELDS");
+  });
+});
+
+test("records: an old record saved before VT / 美元定存 existed loads with those fields as 0", function () {
+  var old = JSON.stringify({ app: "現金流製造機", version: 1, records: [{ year: 2025, savedAt: "t", scenario: "樂觀", values: { net: 1234, living: 100 } }] });
+  var back = R.parse(old);
+  assert.strictEqual(back.records[0].values.net, 1234);
+  assert.strictEqual(back.records[0].values.vt, 0);
+  assert.strictEqual(back.records[0].values.usd, 0);
 });
 
 console.log("\n" + passed + " passed, " + failed + " failed");
